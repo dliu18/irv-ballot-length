@@ -13,7 +13,7 @@ with open('config.yml', 'r') as f:
     config = yaml.safe_load(f)
 
 RESULTS_DIR = config['resultsdir']
-
+RATIOS = [i/10.0 for i in range(1, 11)]
 
 def plot_truncation_heatmaps():
 
@@ -197,7 +197,7 @@ def plot_preflib_resampling():
     # Skip duplicate elections with tons of write-ins
     to_skip = ['ED-00018-00000001.soi', 'ED-00018-00000003.soi']
 
-    with open(f'results/preflib-resampling/all-resampling-results.pickle', 'rb') as f:
+    with open(f'results/preflib-resampling/all-subsampling-results-with-replacement.pickle', 'rb') as f:
         elections, resampled_results, true_results = pickle.load(f)
 
     candidate_counts = []
@@ -250,11 +250,14 @@ def plot_preflib_resampling():
 
             for winner in reversed(range(unique_winners.shape[0])):
                 bottom = np.sum(proportions[:winner], axis=0)
-                plt.bar(np.arange(1, winners_seqs.shape[1]+1), proportions[winner], bottom=bottom, label=cand_names[unique_winners[winner]], width=1)
 
-                for h, true_winner in enumerate(true_winner_seq):
-                    if true_winner == unique_winners[winner]:
-                        plt.scatter([1+h], [bottom[h] + proportions[winner][h] / 2], marker='*', color='black')
+                plt.bar(RATIOS, proportions[winner], bottom=bottom, label=cand_names[unique_winners[winner]], width=0.1)
+
+                # plt.bar(np.arange(1, winners_seqs.shape[1]+1), proportions[winner], bottom=bottom, label=cand_names[unique_winners[winner]], width=1)
+
+                # for h, true_winner in enumerate(true_winner_seq):
+                #     if true_winner == unique_winners[winner]:
+                #         plt.scatter([1+h], [bottom[h] + proportions[winner][h] / 2], marker='*', color='black')
 
             if collection != 'ers':
                 plt.legend(fontsize=8, framealpha=0.8)
@@ -262,124 +265,127 @@ def plot_preflib_resampling():
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
             plt.title(f'{stripped_election_name}, $k={len(cand_names)}$, $n={sum(ballot_counts)}$')
-            plt.xlim(0.5, winners_seqs.shape[1]+0.5)
+            plt.xlim(0.05, 1.05)
             plt.ylim(0, 1)
-            plt.xlabel('Ballot length $h$')
+            # plt.xlabel('Ballot length $h$')
+            plt.xlabel('Sampling Ratio')
             plt.ylabel('Resampling win prob.')
-            plt.savefig(f'{resample_win_prob_dir}/{stripped_election_name}-stacked-bars.pdf', bbox_inches='tight')
+            # plt.savefig(f'{resample_win_prob_dir}/{stripped_election_name}-stacked-bars.pdf', bbox_inches='tight')
+            plt.savefig(f'burlington.pdf', bbox_inches='tight')
+
             plt.close()
 
-    fig, axes = plt.subplots(1, 3, figsize=(10, 2.5), sharey=True)
+    # fig, axes = plt.subplots(1, 3, figsize=(10, 2.5), sharey=True)
 
-    labels, counts = np.unique(true_unique_winners, return_counts=True)
-    axes[0].bar(labels, counts, align='center')
-    axes[0].set_ylabel('Count')
-    axes[0].set_xlabel('Truncation winners')
-    axes[0].set_title('Actual')
+    # labels, counts = np.unique(true_unique_winners, return_counts=True)
+    # axes[0].bar(labels, counts, align='center')
+    # axes[0].set_ylabel('Count')
+    # axes[0].set_xlabel('Truncation winners')
+    # axes[0].set_title('Actual')
 
-    axes[1].hist(expected_unique_winners, bins=30)
-    axes[1].set_xlabel('Truncation winners')
-    axes[1].set_title('Expected')
+    # axes[1].hist(expected_unique_winners, bins=30)
+    # axes[1].set_xlabel('Truncation winners')
+    # axes[1].set_title('Expected')
 
-    labels, counts = np.unique(max_unique_winners, return_counts=True)
-    axes[2].bar(labels, counts, align='center')
-    axes[2].set_xticks([1, 2, 3, 4, 5, 6])
-    axes[2].set_xlabel('Truncation winners')
-    axes[2].set_title('Maximum')
+    # labels, counts = np.unique(max_unique_winners, return_counts=True)
+    # axes[2].bar(labels, counts, align='center')
+    # axes[2].set_xticks([1, 2, 3, 4, 5, 6])
+    # axes[2].set_xlabel('Truncation winners')
+    # axes[2].set_title('Maximum')
 
-    # plt.xscale('log')
-    plt.savefig(f'{out_dir}/truncation-winners.pdf', bbox_inches='tight')
-    plt.close()
+    # # plt.xscale('log')
+    # plt.savefig(f'{out_dir}/truncation-winners.pdf', bbox_inches='tight')
+    # plt.close()
 
-    fig, axes = plt.subplots(1, 3, figsize=(10, 2.5))
+    # fig, axes = plt.subplots(1, 3, figsize=(10, 2.5))
 
-    axes[0].bar(np.arange(max(candidate_counts)+1), np.bincount(candidate_counts), width=1)
-    axes[0].set_xlabel('number of candidates $k$')
-    axes[0].set_ylabel('count')
-    axes[0].set_xlim(left=0)
+    # axes[0].bar(np.arange(max(candidate_counts)+1), np.bincount(candidate_counts), width=1)
+    # axes[0].set_xlabel('number of candidates $k$')
+    # axes[0].set_ylabel('count')
+    # axes[0].set_xlim(left=0)
 
-    axes[1].bar(np.arange(max(ballot_lengths)+1), np.bincount(ballot_lengths), width=1)
-    axes[1].set_xlabel('ballot length $h$')
-    axes[1].sharey(axes[0])
-    axes[1].set_xlim(left=0)
+    # axes[1].bar(np.arange(max(ballot_lengths)+1), np.bincount(ballot_lengths), width=1)
+    # axes[1].set_xlabel('ballot length $h$')
+    # axes[1].sharey(axes[0])
+    # axes[1].set_xlim(left=0)
 
-    hist, bins = np.histogram(voter_counts, bins=30)
-    logbins = np.logspace(np.log10(bins[0]), np.log10(bins[-1]), len(bins))
-    axes[2].hist(voter_counts, bins=logbins)
-    axes[2].set_xscale('log')
-    axes[2].set_xlabel('number of voters $n$')
-    axes[2].set_xticks([10**1, 10**2, 10**3, 10**4, 10**5])
+    # hist, bins = np.histogram(voter_counts, bins=30)
+    # logbins = np.logspace(np.log10(bins[0]), np.log10(bins[-1]), len(bins))
+    # axes[2].hist(voter_counts, bins=logbins)
+    # axes[2].set_xscale('log')
+    # axes[2].set_xlabel('number of voters $n$')
+    # axes[2].set_xticks([10**1, 10**2, 10**3, 10**4, 10**5])
 
-    plt.savefig(f'{out_dir}/k-and-h.pdf', bbox_inches='tight')
+    # plt.savefig(f'{out_dir}/k-and-h.pdf', bbox_inches='tight')
 
-    plt.close()
+    # plt.close()
 
-    with open(f'results/general-truncation-results-40-max-10000-trials.pickle', 'rb') as f:
-        winners_general, _, max_k, _ = pickle.load(f)
+    # with open(f'results/general-truncation-results-40-max-10000-trials.pickle', 'rb') as f:
+    #     winners_general, _, max_k, _ = pickle.load(f)
 
-    with open(f'results/general-partial-truncation-results-40-max-10000-trials.pickle', 'rb') as f:
-        winners_general_partial, _, _, _ = pickle.load(f)
+    # with open(f'results/general-partial-truncation-results-40-max-10000-trials.pickle', 'rb') as f:
+    #     winners_general_partial, _, _, _ = pickle.load(f)
 
-    with open(f'results/1d-truncation-results-40-max-10000-trials-cand-pos.pickle', 'rb') as f:
-        winners_1d, _, _, _, _ = pickle.load(f)
+    # with open(f'results/1d-truncation-results-40-max-10000-trials-cand-pos.pickle', 'rb') as f:
+    #     winners_1d, _, _, _, _ = pickle.load(f)
 
-    with open(f'results/1d-partial-truncation-results-40-max-10000-trials-cand-pos.pickle', 'rb') as f:
-        winners_1d_partial, _, _, _, _ = pickle.load(f)
+    # with open(f'results/1d-partial-truncation-results-40-max-10000-trials-cand-pos.pickle', 'rb') as f:
+    #     winners_1d_partial, _, _, _, _ = pickle.load(f)
 
-    ks = np.arange(3, max_k + 1)
-    plt.figure(figsize=(4, 2.5))
+    # ks = np.arange(3, max_k + 1)
+    # plt.figure(figsize=(4, 2.5))
 
-    print('\nSimulation winner count means:')
-    for winners, name in zip((winners_general, winners_general_partial, winners_1d, winners_1d_partial),
-                             ('general full', 'general partial', '1-Euclidean full', '1-Euclidean partial')):
-        color = 'green' if 'general' in name else 'blue'
+    # print('\nSimulation winner count means:')
+    # for winners, name in zip((winners_general, winners_general_partial, winners_1d, winners_1d_partial),
+    #                          ('general full', 'general partial', '1-Euclidean full', '1-Euclidean partial')):
+    #     color = 'green' if 'general' in name else 'blue'
 
-        winner_counts = [[len(np.unique(x)) for x in winners[k]] for k in ks]
-        winner_count_means = np.mean(winner_counts, axis=1)
-        winner_count_stds = np.std(winner_counts, axis=1)
+    #     winner_counts = [[len(np.unique(x)) for x in winners[k]] for k in ks]
+    #     winner_count_means = np.mean(winner_counts, axis=1)
+    #     winner_count_stds = np.std(winner_counts, axis=1)
 
-        print(name, winner_count_means)
+    #     print(name, winner_count_means)
 
-        plt.plot(ks, winner_count_means, label=name, ls='dashed' if 'partial' in name else 'solid', c=color)
-        plt.fill_between(ks, winner_count_means - winner_count_stds,
-                         winner_count_means + winner_count_stds, alpha=0.2, color=color)
+    #     plt.plot(ks, winner_count_means, label=name, ls='dashed' if 'partial' in name else 'solid', c=color)
+    #     plt.fill_between(ks, winner_count_means - winner_count_stds,
+    #                      winner_count_means + winner_count_stds, alpha=0.2, color=color)
 
-    plt.scatter(np.array(candidate_counts) + (np.random.random(len(candidate_counts)) * 0.5) - 0.25,
-                np.array(expected_unique_winners),
-                label='PrefLib', marker='.', color='red', s=10, zorder=10)
+    # plt.scatter(np.array(candidate_counts) + (np.random.random(len(candidate_counts)) * 0.5) - 0.25,
+    #             np.array(expected_unique_winners),
+    #             label='PrefLib', marker='.', color='red', s=10, zorder=10)
 
-    plt.ylabel('mean # truncation winners')
-    plt.xticks([1, 10, 20, 30, 40], [])
+    # plt.ylabel('mean # truncation winners')
+    # plt.xticks([1, 10, 20, 30, 40], [])
 
-    plt.legend(loc='upper left', fontsize=8)
-    plt.savefig('plots/mean-winner-counts.pdf', bbox_inches='tight')
-    plt.close()
+    # plt.legend(loc='upper left', fontsize=8)
+    # plt.savefig('plots/mean-winner-counts.pdf', bbox_inches='tight')
+    # plt.close()
 
-    plt.figure(figsize=(4, 2.5))
+    # plt.figure(figsize=(4, 2.5))
 
-    for winners, name in zip((winners_general, winners_general_partial, winners_1d, winners_1d_partial),
-                             ('general full', 'general partial', '1-Euclidean full', '1-Euclidean partial')):
-        color = 'green' if 'general' in name else 'blue'
+    # for winners, name in zip((winners_general, winners_general_partial, winners_1d, winners_1d_partial),
+    #                          ('general full', 'general partial', '1-Euclidean full', '1-Euclidean partial')):
+    #     color = 'green' if 'general' in name else 'blue'
 
-        winner_counts = [[len(np.unique(x)) for x in winners[k]] for k in ks]
-        winner_count_maxs = np.max(winner_counts, axis=1)
-        # winner_count_stds = np.std(winner_counts, axis=1)
+    #     winner_counts = [[len(np.unique(x)) for x in winners[k]] for k in ks]
+    #     winner_count_maxs = np.max(winner_counts, axis=1)
+    #     # winner_count_stds = np.std(winner_counts, axis=1)
 
-        plt.plot(ks, winner_count_maxs, label=name, ls='dashed' if 'partial' in name else 'solid', c=color)
+    #     plt.plot(ks, winner_count_maxs, label=name, ls='dashed' if 'partial' in name else 'solid', c=color)
 
-    plt.scatter(np.array(candidate_counts) + (np.random.random(len(candidate_counts)) * 0.5) - 0.25,
-                np.array(max_unique_winners), label='PrefLib', marker='.', color='red', s=10, zorder=10)
+    # plt.scatter(np.array(candidate_counts) + (np.random.random(len(candidate_counts)) * 0.5) - 0.25,
+    #             np.array(max_unique_winners), label='PrefLib', marker='.', color='red', s=10, zorder=10)
 
-    plt.plot(ks, np.maximum(1, ks - 1), color='black', ls='dotted', label='theoretical max')
-    plt.xlabel('# candidates ($k$)')
-    plt.ylabel('max # truncation winners')
-    plt.ylim(0, 15)
-    plt.xticks([1, 10, 20, 30, 40], [1, 10, 20, 30, 40])
-    plt.yticks([1, 5, 10, 15])
+    # plt.plot(ks, np.maximum(1, ks - 1), color='black', ls='dotted', label='theoretical max')
+    # plt.xlabel('# candidates ($k$)')
+    # plt.ylabel('max # truncation winners')
+    # plt.ylim(0, 15)
+    # plt.xticks([1, 10, 20, 30, 40], [1, 10, 20, 30, 40])
+    # plt.yticks([1, 5, 10, 15])
 
-    plt.text(5, 6, 'theoretical max', rotation=59)
-    plt.savefig('plots/max-winner-counts.pdf', bbox_inches='tight')
-    plt.close()
+    # plt.text(5, 6, 'theoretical max', rotation=59)
+    # plt.savefig('plots/max-winner-counts.pdf', bbox_inches='tight')
+    # plt.close()
 
 
 def make_preflib_table():
@@ -455,9 +461,9 @@ if __name__ == '__main__':
 
     os.makedirs('plots', exist_ok=True)
 
-    plot_truncation_heatmaps()
-    plot_combined_small_heatmaps()
+    # plot_truncation_heatmaps()
+    # plot_combined_small_heatmaps()
     plot_preflib_resampling()
-    plot_small_stacked_bars()
-    make_preflib_table()
-    print_lp_constructions()
+    # plot_small_stacked_bars()
+    # make_preflib_table()
+    # print_lp_constructions()

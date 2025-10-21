@@ -16,7 +16,7 @@ with open('config.yml', 'r') as f:
     config = yaml.safe_load(f)
 
 DATA_DIR = config['datadir']
-
+RATIOS = [i/10.0 for i in range(1, 11)]
 
 def clean_up_invalid_ballots(ballots, ballot_counts):
     """
@@ -151,15 +151,37 @@ def get_plurality_and_second_round_majority_winner(cand_names, ballots, ballot_c
     return None
 
 
-def resample(ballot_counts, seed=0):
-    n = sum(ballot_counts)
-    p = np.array(ballot_counts) / n
-
+def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
     rng = default_rng(seed=seed)
+    n = np.sum(ballot_counts)
+    if sample_size == -1:
+        sample_size = n
 
-    resampled_counts = rng.multinomial(n, pvals=p)
+    if with_replacement:
+        p = np.array(ballot_counts) / n
+        resampled_counts = rng.multinomial(sample_size, pvals=p)
+        return resampled_counts
+    else:
+        assert sample_size <= n
 
-    return resampled_counts
+        indices = np.concatenate([
+            [idx] * ballot_counts[idx] 
+            for idx in range(len(ballot_counts))
+        ])
+
+        sampled_idxs = rng.choice(
+            indices,
+            size=sample_size,
+            replace=False)
+
+        resampled_counts = np.zeros(len(ballot_counts))
+        for sampled_idx in sampled_idxs:
+            resampled_counts[sampled_idx] += 1
+
+        assert np.sum(resampled_counts) == sample_size
+        return resampled_counts
+
+
 
 
 def election_resampling_helper(args):
@@ -172,11 +194,40 @@ def election_resampling_helper(args):
     return collection, election_name, winners, majority_winner
 
 
+def election_subset_sampling_helper(args):
+    (collection, election_name, ballots, ballot_counts, cand_names, skipped_votes), \
+        h, \
+        with_replacement, \
+        seed = args
+
+    n = np.sum(ballot_counts)
+    k = len(cand_names)
+
+    winners = [0] * len(RATIOS)
+    for idx, ratio in enumerate(RATIOS):
+        sample_size = int(n * ratio)
+        sampled_ballot_counts = resample(ballot_counts, sample_size=sample_size, with_replacement=with_replacement, seed=seed)
+
+        majority_winner = get_majority_winner(cand_names, ballots, sampled_ballot_counts)
+
+        if majority_winner is None:
+            truncated_ballots = [b[:h] for b in ballots]
+            elim_votes = run_irv(k, truncated_ballots, sampled_ballot_counts, cands=cand_names.keys())
+            winners[idx] =  max(elim_votes, key=elim_votes.get)
+        else:
+            winners[idx] = majority_winner
+
+    return collection, election_name, winners, 0
+
 def election_resampling(threads):
     elections = load_all_preflib_elections()
     trials = 10000
 
-    params = ((election, trial) for election in elections for trial in range(trials))
+    # params = ((election, trial) for election in elections for trial in range(trials))
+
+    h = 5
+    with_replacement = True
+    params = ((election, h, with_replacement, trial) for election in elections for trial in range(trials))
 
     resampled_results = {(election[0], election[1]): [] for election in elections}
     true_results = {(collection, election_name): analyze_election(ballots, ballot_counts, cand_names)
@@ -184,14 +235,14 @@ def election_resampling(threads):
 
     with Pool(threads) as pool:
         for collection, election_name, winners, majority_winner in tqdm(pool.imap_unordered(
-                election_resampling_helper, params), total=trials*len(elections)):
+                election_subset_sampling_helper, params), total=trials*len(elections)):
 
             resampled_results[collection, election_name].append((winners, majority_winner))
 
     out_dir = 'results/preflib-resampling'
     os.makedirs(out_dir, exist_ok=True)
 
-    with open(f'{out_dir}/all-resampling-results.pickle', 'wb') as f:
+    with open(f'{out_dir}/all-subsampling-results-with-replacement.pickle', 'wb') as f:
         pickle.dump((elections, resampled_results, true_results), f)
 
 
