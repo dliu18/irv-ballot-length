@@ -75,19 +75,13 @@ def analyze_election(ballots, ballot_counts, cand_names):
     k = len(cand_names)
     max_ballot_length = max(len(b) for b in ballots)
 
-    winners = []
-
     majority_winner = get_majority_winner(cand_names, ballots, ballot_counts)
 
     if majority_winner is None:
-        for h in range(1, max_ballot_length + 1):
-            truncated_ballots = [b[:h] for b in ballots]
-            elim_votes = run_irv(k, truncated_ballots, ballot_counts, cands=cand_names.keys())
-            winners.append(max(elim_votes, key=elim_votes.get))
+        elim_votes = run_irv(k, ballots, ballot_counts, cands=cand_names.keys())
+        return max(elim_votes, key=elim_votes.get)
     else:
-        winners = [majority_winner] * max_ballot_length
-
-    return winners, majority_winner
+        return majority_winner
 
 
 def load_all_preflib_elections():
@@ -182,9 +176,6 @@ def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
         assert np.sum(resampled_counts) == sample_size
         return resampled_counts
 
-
-
-
 def election_resampling_helper(args):
     (collection, election_name, ballots, ballot_counts, cand_names, skipped_votes), seed = args
 
@@ -207,7 +198,7 @@ def election_subset_sampling_helper(args):
     print(ballots)
     winners = [0] * len(RATIOS)
     for idx, ratio in enumerate(RATIOS):
-        sample_size = int(n * ratio)
+        sample_size = max(int(n * ratio), 1)
         sampled_ballot_counts = resample(ballot_counts, sample_size=sample_size, with_replacement=with_replacement, seed=seed)
 
         majority_winner = get_majority_winner(cand_names, ballots, sampled_ballot_counts)
@@ -260,37 +251,10 @@ def election_resampling(threads):
         pickle.dump((elections, RATIOS, NUM_TRIALS, resampled_results, true_results), f)
 
 
-def print_summary_stats():
-    elections = load_all_preflib_elections()
-
-    hs = []
-    truncation_winners = []
-
-    for collection, election_name, ballots, ballot_counts, cand_names, skipped_votes in elections:
-        winners, majority_winner = analyze_election(ballots, ballot_counts, cand_names)
-
-        hs.append(max(len(x) for x in ballots))
-        truncation_winners.append(len(np.unique(winners)))
-
-    hs = np.array(hs)
-    truncation_winners = np.array(truncation_winners)
-
-    print('Total elections:', len(hs))
-
-    for i, count in enumerate(np.bincount(truncation_winners)):
-        print(f'{i} truncation winners: {count} elections')
-
-    print()
-    print('Restricting to elections with h <= 5', np.count_nonzero(hs <= 5))
-    for i, count in enumerate(np.bincount(truncation_winners[hs <= 5])):
-        print(f'{i} truncation winners: {count} elections')
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--threads', type=int)
     args = parser.parse_args()
 
-    print_summary_stats()
     election_resampling(args.threads)
 
