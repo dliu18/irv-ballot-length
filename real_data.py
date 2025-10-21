@@ -16,7 +16,8 @@ with open('config.yml', 'r') as f:
     config = yaml.safe_load(f)
 
 DATA_DIR = config['datadir']
-RATIOS = [i/10.0 for i in range(1, 11)]
+RATIOS = [2**i / 100 for i in range(9)]
+NUM_TRIALS = 1000
 
 def clean_up_invalid_ballots(ballots, ballot_counts):
     """
@@ -203,6 +204,7 @@ def election_subset_sampling_helper(args):
     n = np.sum(ballot_counts)
     k = len(cand_names)
 
+    print(ballots)
     winners = [0] * len(RATIOS)
     for idx, ratio in enumerate(RATIOS):
         sample_size = int(n * ratio)
@@ -217,33 +219,45 @@ def election_subset_sampling_helper(args):
         else:
             winners[idx] = majority_winner
 
-    return collection, election_name, winners, 0
+    return collection, election_name, winners
 
 def election_resampling(threads):
     elections = load_all_preflib_elections()
-    trials = 10000
 
     # params = ((election, trial) for election in elections for trial in range(trials))
 
-    h = 5
     with_replacement = True
-    params = ((election, h, with_replacement, trial) for election in elections for trial in range(trials))
+    params = (
+        (
+            election, 
+            len(election[4]), #set h=k where election[4] is cand_names 
+            with_replacement, 
+            trial #seed number
+        ) 
+        for election in elections for trial in range(NUM_TRIALS)
+    )
 
-    resampled_results = {(election[0], election[1]): [] for election in elections}
+    resampled_results = {
+        (election[0], election[1]): [
+            {candidate: 0 for candidate in election[4]} 
+            for ratio_idx in range(len(RATIOS))
+            ] 
+        for election in elections
+    }
     true_results = {(collection, election_name): analyze_election(ballots, ballot_counts, cand_names)
                     for collection, election_name, ballots, ballot_counts, cand_names, skipped_votes in elections}
 
     with Pool(threads) as pool:
-        for collection, election_name, winners, majority_winner in tqdm(pool.imap_unordered(
-                election_subset_sampling_helper, params), total=trials*len(elections)):
-
-            resampled_results[collection, election_name].append((winners, majority_winner))
+        for collection, election_name, winners in tqdm(pool.imap_unordered(
+                election_subset_sampling_helper, params), total=NUM_TRIALS*len(elections)):
+            for ratio_idx, winner in enumerate(winners):
+                resampled_results[collection, election_name][ratio_idx][winner] += 1
 
     out_dir = 'results/preflib-resampling'
     os.makedirs(out_dir, exist_ok=True)
 
-    with open(f'{out_dir}/all-subsampling-results-with-replacement.pickle', 'wb') as f:
-        pickle.dump((elections, resampled_results, true_results), f)
+    with open(f'{out_dir}/all-subsampling-results.pickle', 'wb') as f:
+        pickle.dump((elections, RATIOS, NUM_TRIALS, resampled_results, true_results), f)
 
 
 def print_summary_stats():
