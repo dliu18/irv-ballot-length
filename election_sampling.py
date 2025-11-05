@@ -1,7 +1,8 @@
 import argparse
+import glob
 import os
 import pickle
-import time
+from collections import defaultdict
 from multiprocessing import Pool
 
 import numpy as np
@@ -10,17 +11,64 @@ from numpy.random import default_rng
 from tqdm import tqdm
 
 from irv import run_irv
-import utils
-
-import json
 
 with open('config.yml', 'r') as f:
     config = yaml.safe_load(f)
 
 DATA_DIR = config['datadir']
-RATIOS = [2**i / 100 for i in range(10)]
-RATIOS.extend([2**11 / 100, 2**15 / 100, 2**17 / 100, 2**30/100, 2**40/100])
-NUM_TRIALS = 500
+RATIOS = [2**i / 100 for i in range(9)]
+NUM_TRIALS = 1000
+
+def clean_up_invalid_ballots(ballots, ballot_counts):
+    """
+    Fix ballots where candidates appear multiple times. Only the first appearance of a candidate is counted
+    :param ballots:
+    :param ballot_counts:
+    :return:
+    """
+
+    merged_counts = defaultdict(int)
+
+    for ballot, ballot_count in zip(ballots, ballot_counts):
+        clean_ballot, idx = np.unique(ballot, return_index=True)
+        clean_ballot = tuple(clean_ballot[np.argsort(idx)])
+
+        merged_counts[clean_ballot] += ballot_count
+
+    ballots, ballot_counts = zip(*merged_counts.items())
+
+    return list(map(np.array, ballots)), ballot_counts
+
+
+def read_preflib(file_name):
+    with open(file_name, 'r') as f:
+        n_cands = int(f.readline())
+
+        cand_names = dict()
+        for i in range(n_cands):
+            split = f.readline().strip().split(',')
+            cand_idx = int(split[0])
+            cand_names[cand_idx] = ','.join(split[1:])
+
+        n_voters, votes, unique_ballots = map(int, f.readline().strip().split(','))
+
+        ballot_counts = []
+        ballots = []
+        skipped_votes = 0
+        for i in range(unique_ballots):
+            line = f.readline().strip()
+            split_line = line.split(',')
+
+            # Skip any ballots with ties
+            if '{' not in line:
+                ballot_counts.append(int(split_line[0]))
+                ballots.append(np.array(tuple(map(int, split_line[1:]))))
+            else:
+                skipped_votes += int(split_line[0])
+
+    ballots, ballot_counts = clean_up_invalid_ballots(ballots, ballot_counts)
+
+    return ballots, ballot_counts, cand_names, skipped_votes
 
 
 def analyze_election(ballots, ballot_counts, cand_names):
@@ -30,10 +78,36 @@ def analyze_election(ballots, ballot_counts, cand_names):
     majority_winner = get_majority_winner(cand_names, ballots, ballot_counts)
 
     if majority_winner is None:
-        elim_votes = run_irv(k, ballots.copy(), ballot_counts, cands=cand_names.keys())
+        elim_votes = run_irv(k, ballots, ballot_counts, cands=cand_names.keys())
         return max(elim_votes, key=elim_votes.get)
     else:
         return majority_winner
+
+
+def load_all_preflib_elections():
+    election_dir = f'{DATA_DIR}/preflib/elections'
+
+    elections = []
+
+    for collection in glob.glob(f'{election_dir}/*'):
+        for file_name in glob.glob(f'{collection}/*.toi') + glob.glob(f'{collection}/*.soi'):
+
+            # Skip duplicate elections with write-ins
+            if os.path.basename(file_name) in ['ED-00018-00000001.soi', 'ED-00018-00000003.soi']:
+                continue
+
+            ballots, ballot_counts, cand_names, skipped_votes = read_preflib(file_name)
+
+            elections.append((
+                os.path.basename(collection),
+                os.path.basename(file_name),
+                ballots,
+                ballot_counts,
+                cand_names,
+                skipped_votes
+            ))
+
+    return elections
 
 
 def get_majority_winner(cand_names, ballots, ballot_counts):
@@ -72,10 +146,40 @@ def get_plurality_and_second_round_majority_winner(cand_names, ballots, ballot_c
     return None
 
 
+def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
+    rng = default_rng(seed=seed)
+    n = np.sum(ballot_counts)
+    if sample_size == -1:
+        sample_size = n
+
+    if with_replacement:
+        p = np.array(ballot_counts) / n
+        resampled_counts = rng.multinomial(sample_size, pvals=p)
+        return resampled_counts
+    else:
+        assert sample_size <= n
+
+        indices = np.concatenate([
+            [idx] * ballot_counts[idx] 
+            for idx in range(len(ballot_counts))
+        ])
+
+        sampled_idxs = rng.choice(
+            indices,
+            size=sample_size,
+            replace=False)
+
+        resampled_counts = np.zeros(len(ballot_counts))
+        for sampled_idx in sampled_idxs:
+            resampled_counts[sampled_idx] += 1
+
+        assert np.sum(resampled_counts) == sample_size
+        return resampled_counts
+
 def election_resampling_helper(args):
     (collection, election_name, ballots, ballot_counts, cand_names, skipped_votes), seed = args
 
-    ballot_counts = utils.resample(ballot_counts, seed=seed)
+    ballot_counts = resample(ballot_counts, seed=seed)
 
     winners, majority_winner = analyze_election(ballots, ballot_counts, cand_names)
 
@@ -88,14 +192,11 @@ def election_subset_sampling_helper(args):
         with_replacement, \
         seed = args
 
-    start = time.time()
-
     n = np.sum(ballot_counts)
     k = len(cand_names)
 
+    print(ballots)
     winners = [0] * len(RATIOS)
-    elim_order_by_ratio = [""] * len(RATIOS)
-
     for idx, ratio in enumerate(RATIOS):
         sample_size = max(int(n * ratio), 1)
         sampled_ballot_counts = resample(ballot_counts, sample_size=sample_size, with_replacement=with_replacement, seed=seed)
@@ -106,18 +207,13 @@ def election_subset_sampling_helper(args):
             truncated_ballots = [b[:h] for b in ballots]
             elim_votes = run_irv(k, truncated_ballots, sampled_ballot_counts, cands=cand_names.keys())
             winners[idx] =  max(elim_votes, key=elim_votes.get)
-
-            elim_order_by_ratio[idx] = utils.get_elim_order(elim_votes)
-
         else:
             winners[idx] = majority_winner
-            elim_order_by_ratio[idx] = majority_winner
 
-    runtime = int(time.time() - start)
-    return collection, election_name, winners, elim_order_by_ratio, runtime
+    return collection, election_name, winners
 
 def election_resampling(threads):
-    elections = utils.load_all_preflib_elections(f'{DATA_DIR}/preflib/elections-all')
+    elections = load_all_preflib_elections()
 
     # params = ((election, trial) for election in elections for trial in range(trials))
 
@@ -139,58 +235,21 @@ def election_resampling(threads):
             ] 
         for election in elections
     }
-
-    # for each election, for the highest ratio, count the number of occurences of each elimination order
-    elim_order_in_the_limit_counts = {
-        (election[0], election[1]): {}
-        for election in elections
-    }
-
-
     true_results = {(collection, election_name): analyze_election(ballots, ballot_counts, cand_names)
                     for collection, election_name, ballots, ballot_counts, cand_names, skipped_votes in elections}
 
-    out_dir = 'results/preflib-resampling'
-    os.makedirs(out_dir, exist_ok=True)
-
-    meta_data_dir = 'results/logs'
-    os.makedirs(meta_data_dir, exist_ok=True)
-
-    runtimes = {}
-    threads_completed = 0
-
     with Pool(threads) as pool:
-        for collection, election_name, winners, elim_order_by_ratio, runtime in tqdm(pool.imap_unordered(
+        for collection, election_name, winners in tqdm(pool.imap_unordered(
                 election_subset_sampling_helper, params), total=NUM_TRIALS*len(elections)):
             for ratio_idx, winner in enumerate(winners):
                 resampled_results[collection, election_name][ratio_idx][winner] += 1
 
-            
-            elim_order_in_the_limit = elim_order_by_ratio[-1]
-            if elim_order_in_the_limit not in elim_order_in_the_limit_counts[collection, election_name]:
-                elim_order_in_the_limit_counts[collection, election_name][elim_order_in_the_limit] = 0
-            elim_order_in_the_limit_counts[collection, election_name][elim_order_in_the_limit] += 1
+    out_dir = 'results/preflib-resampling'
+    os.makedirs(out_dir, exist_ok=True)
 
-            if f"{collection}-{election_name}" not in runtimes:
-                runtimes[f"{collection}-{election_name}"] = 0
-            runtimes[f"{collection}-{election_name}"] += runtime
-            threads_completed += 1
+    with open(f'{out_dir}/all-subsampling-results.pickle', 'wb') as f:
+        pickle.dump((elections, RATIOS, NUM_TRIALS, resampled_results, true_results), f)
 
-            if threads_completed % 1000 == 0:
-                with open(f'{out_dir}/uncertain-subsampling-results.pickle', 'wb') as f:
-                    pickle.dump((elections, RATIOS, NUM_TRIALS, resampled_results, true_results, elim_order_in_the_limit_counts), f)
-                # with open(f"{meta_data_dir}/resampling-runtimes.txt", "w") as f:
-                #     f.write(f"ratios: {RATIOS}")
-                #     f.write(f"num trials: {NUM_TRIALS}")
-                #     f.write(json.dumps(runtimes, indent=4))
-
-    with open(f'{out_dir}/uncertain-subsampling-results.pickle', 'wb') as f:
-        pickle.dump((elections, RATIOS, NUM_TRIALS, resampled_results, true_results, elim_order_in_the_limit_counts), f)
-
-    # with open(f"{meta_data_dir}/resampling-runtimes.txt", "w") as f:
-    #     f.write(f"ratios: {RATIOS}")
-    #     f.write(f"num trials: {NUM_TRIALS}")
-    #     f.write(json.dumps(runtimes, indent=4))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -198,3 +257,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     election_resampling(args.threads)
+

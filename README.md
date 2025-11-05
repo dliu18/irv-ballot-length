@@ -29,7 +29,7 @@ Tested with:
 ## Reproducibility
 First, uncompress the results files:
 
-    gunzip results/*.gz 
+    gunzip results/*.gz 0
 
 Create plots from our results files and print additional data/result details:
 
@@ -59,3 +59,16 @@ To visualize IRV in in 1-dimension with uniform 1-Euclidean voters, try running
 This launches an interactive plot showing the regions of the unit interval where voters rank each candidate at each 
 position. In the title, you can also see the winners at each truncation length. Try moving the candidates around
 to change the winners at different ballot lengths. You can also specify other candidate counts up to 8 in the command.
+
+## Davids Notes
+Most unstable elections
+
+ers-ED-00007-00000005.soi
+ers-ED-00007-00000019.soi
+ers-ED-00007-00000052.soi
+glasgow-ED-00008-00000012.soi
+
+all-subsampling-results.pickle 700 trials
+all-subsampling-results-backup.pickle 100 trials
+
+uncertain-subsampling-results.pickle uncertain elections
