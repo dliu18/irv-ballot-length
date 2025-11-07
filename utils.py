@@ -7,6 +7,8 @@ from collections import defaultdict
 import time
 from tqdm import tqdm
 
+colors = ['#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e']
+
 def get_elim_order(elim_votes):
     '''
         Return the elimination order of an election as a string "cand_A cand_B ... cand_M" where cand_M is eliminated last (the winner).
