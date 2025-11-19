@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from irv import run_irv
 import utils
-from model import Bootstrap, PLModel
+from model import Bootstrap, PLModel, ContextModel
 
 import os
 from tqdm import tqdm
@@ -14,12 +14,48 @@ import pickle
 
 import argparse
 
+import time 
+
 # Before: (NUM_POLLS^2 + NUM_POLLS) * NUM_FORECASTING_TRIALS = 5000 
 # After: 2 * NUM_POLLS * NUM_FORECASTING_TRIALS = 3200
-NUM_FORECASTING_TRIALS = 5
-NUM_POLLS = 3
+NUM_FORECASTING_TRIALS = 100
+NUM_POLLS = 25
 NUM_FORECASTER_STDS = 3
 
+def set_macros(group_num):
+	global NUM_FORECASTING_TRIALS
+	global NUM_POLLS
+	global NUM_FORECASTER_STDS
+	
+	if group_num == 1:
+		NUM_FORECASTING_TRIALS = 100
+		NUM_POLLS = 8
+	elif group_num == 2:
+		NUM_FORECASTING_TRIALS = 100
+		NUM_POLLS = 20
+		NUM_FORECASTER_STDS = 0
+	elif group_num == 3:
+		NUM_FORECASTING_TRIALS = 100
+		NUM_POLLS = 20
+		NUM_FORECASTER_STDS = 0
+	elif group_num == 4:
+		NUM_FORECASTING_TRIALS = 50
+		NUM_POLLS = 5
+		NUM_FORECASTER_STDS = 0
+	elif group_num == 5:
+		NUM_FORECASTING_TRIALS = 100
+		NUM_POLLS = 25
+		NUM_FORECASTER_STDS = 3
+
+def read_group_config(config_file):
+	election_to_group = {}
+	with open(f"config/{config_file}", "r") as f:
+		for line in f.readlines():
+			line_entries = line.split(",")
+			assert len(line_entries) == 2
+
+			election_to_group[line_entries[0]] = int(line_entries[1])
+	return election_to_group
 
 def f(seed_counts, seed_ballots, n, cands, actual_winner, 
 	n_trials=NUM_FORECASTING_TRIALS,
@@ -30,16 +66,22 @@ def f(seed_counts, seed_ballots, n, cands, actual_winner,
 	'''
 	actual_winner_wins_counts = 0
 	if sampler == "Bootstrap":
-		sampling_model = Bootstrap(cands).fit(seed_ballots, seed_counts)
+		sampling_model = Bootstrap(cands)
 	elif sampler == "PL":
 		sampling_model = PLModel(cands, use_end_marker=True, include_unranked=True)
-		sampling_model.fit(seed_ballots, seed_counts)
+	elif sampler == "Contextual":
+		sampling_model = ContextModel(cands)
+	elif sampler == "Contextual By Length":
+		sampling_model = ContextModel(cands, first_choice_prob_by_length=True)
+
+	sampling_model.fit(seed_ballots, seed_counts)
 
 	for seed in range(n_trials):
 		simulated_ballots, simulated_counts = sampling_model.simulate_ballots(
 			num_ballots=n-np.sum(seed_counts),
 			seed=seed)
-		simulated_ballots.extend(seed_ballots)
+
+		simulated_ballots.extend(seed_ballots.copy())
 		simulated_counts.extend(seed_counts)
 		
 		assert np.sum(simulated_counts) == n
@@ -99,18 +141,18 @@ def plot_forecaster_vs_oracle(sampling_rates,
 
 def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
 	sampling_rates = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 0.95, 1.0]
-	samplers = ["Bootstrap", "PL"]
-	forecasters = ["PL"]
+	samplers = ["Bootstrap", "PL", "Contextual"]
+	forecasters = ["Contextual", "Contextual By Length"]
 
 	oracle_mean_by_sampling_rate = [] #one float entry per sampling ratio
-	forecaster_mean_by_sampling_rate = {forecaster: [] for forecaster in forecasters}
+	forecaster_mean_by_sampling_method = {forecaster: [] for forecaster in forecasters}
 
 	oracle_std_by_sampling_rate = [] #one float entry per sampling ratio
 	forecaster_std_by_sampling_method = {sampler: [[] for _ in range(len(sampling_rates))] for sampler in samplers}
 
 	for idx, sampling_rate in enumerate(sampling_rates):	
 		oracle_probabilities = []
-		forecaster_probabilities = {forecaster: [] for forecaster in forecaster_probabilities}
+		forecaster_probabilities = {forecaster: [] for forecaster in forecasters}
 		
 		# ORACLE UNCERTAINTY
 		for oracle_seed in range(NUM_POLLS):
@@ -137,8 +179,8 @@ def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
 					n=np.sum(ballot_counts), 
 					cands=cand_names,
 					actual_winner=actual_winner,
-					sampler="PL")
-				forecaster_probabilities[forecaster].append(oracle_prob_actual_winner_wins)
+					sampler=forecaster)
+				forecaster_probabilities[forecaster].append(forecaster_prob_actual_winner_wins)
 
 			if oracle_seed >= NUM_FORECASTER_STDS:
 				continue
@@ -147,9 +189,13 @@ def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
 			for sampler in samplers:
 				win_probabilities_across_seeds = [oracle_prob_actual_winner_wins]
 				if sampler == "Bootstrap":
-					sampling_model = Bootstrap(cands_names).fit(ballots, oracle_poll)
+					sampling_model = Bootstrap(cand_names)
+					sampling_model.fit(ballots, oracle_poll)
 				elif sampler == "PL":
-					sampling_model = PLModel(cands_names, use_end_marker=True, include_unranked=True)
+					sampling_model = PLModel(cand_names, use_end_marker=True, include_unranked=True)
+					sampling_model.fit(ballots, oracle_poll)
+				elif sampler == "Contextual":
+					sampling_model = ContextModel(cand_names)
 					sampling_model.fit(ballots, oracle_poll)
 
 				for forecaster_seed in range(NUM_POLLS - 1):
@@ -171,7 +217,7 @@ def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
 		oracle_mean_by_sampling_rate.append(np.mean(oracle_probabilities))
 		oracle_std_by_sampling_rate.append(np.std(oracle_probabilities))
 		for forecaster in forecasters:
-			forecaster_mean_by_sampling_rate[forecaster].append(
+			forecaster_mean_by_sampling_method[forecaster].append(
 				np.mean(forecaster_probabilities[forecaster]))
 
 	return sampling_rates, \
@@ -192,6 +238,7 @@ def process_one_election(election_tuple):
     sampling_rates, \
     oracle_means, \
     oracle_stds, \
+    forecaster_means, \
     forecaster_stds = forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner)
 
     return (
@@ -199,6 +246,7 @@ def process_one_election(election_tuple):
         sampling_rates,
         oracle_means,
         oracle_stds,
+        forecaster_means,
         forecaster_stds,
         time.time() - start
     )
@@ -212,8 +260,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str)
     parser.add_argument('--output_dir', type=str)
+    parser.add_argument('--config_file', type=str, default='')
+    parser.add_argument('--group_num', type=int, default=-1)
 
     args = parser.parse_args()
+
+    if args.group_num >= 0:
+    	assert args.config_file != ''
 
     # Ensure output directory exists
     out_dir = os.path.join("results", "preflib-resampling", args.output_dir)
@@ -225,6 +278,18 @@ if __name__ == "__main__":
 
     # Load elections
     elections = list(utils.load_all_preflib_elections(f'data/preflib/{args.data_dir}'))
+    if args.group_num >= 0:
+    	election_to_group = read_group_config(args.config_file)
+    	elections = [
+    		election for election in elections 
+    		if election_to_group[f"{election[0]}-{election[1][-6:-4]}"] == args.group_num
+    	]
+    print(len(elections))
+
+    set_macros(args.group_num)
+    print(f"NUM_FORECASTING_TRIALS: {NUM_FORECASTING_TRIALS}")
+    print(f"NUM_POLLS: {NUM_POLLS}")
+    print(f"NUM_FORECASTER_STDS: {NUM_FORECASTER_STDS}")
 
     # Parallel computation
     num_workers = min(len(elections), cpu_count())
@@ -240,12 +305,13 @@ if __name__ == "__main__":
                     sampling_rates,
                     oracle_means,
                     oracle_stds,
+                    forecaster_means,
                     forecaster_stds,
                     duration
                 ) = res
 
-                with open("timing.csv", "a") as f:
-                	f.write(f"{fig_name},{duration}")
+                # with open("timing.csv", "a") as f:
+                # 	f.write(f"{fig_name},{duration}")
 
                 # Save pickle immediately for this election
                 out_path = os.path.join(out_dir, f"{fig_name}.pkl")
@@ -256,20 +322,20 @@ if __name__ == "__main__":
                             "sampling_rates": sampling_rates,
                             "oracle_means": oracle_means,
                             "oracle_stds": oracle_stds,
+                            "forecaster_means": forecaster_means,
                             "forecaster_stds": forecaster_stds,
                         },
-                        f,
-                        protocol=pickle.HIGHEST_PROTOCOL,
+                        f
                     )
-                print(f"Saved: {out_path}")
+                # print(f"Saved: {out_path}")
 
                 # Plot right away (main process only)
                 plot_forecaster_vs_oracle(
                     sampling_rates,
                     oracle_means,
                     oracle_stds,
-                    [], # forecaster means
-                    [("Bootstrap", forecaster_stds)],
+                    forecaster_means, 
+                    forecaster_stds,
                     fig_dir,
                     fig_name,
                 )

@@ -213,9 +213,19 @@ def run_irv(k, ballot_types, votes_per_ballot_type, cands=None):
 
     while len(active_cands) > 0:
         top_choice_sizes = {i: 0 for i in active_cands}
+
+        valid_ballots = 0
+        total_ballots = 0
         for i, ballot in enumerate(ballot_types):
             if len(ballot) > 0:
+                # try:
+                    # total_ballots += 1
                 top_choice_sizes[ballot[0]] += votes_per_ballot_type[i]
+                    # valid_ballots += 1
+                # except:
+                #     # print(ballot)
+                #     continue
+        # print(f"{valid_ballots} of {total_ballots} ballots are valid")
 
         min_cand = min(top_choice_sizes, key=top_choice_sizes.get)
 

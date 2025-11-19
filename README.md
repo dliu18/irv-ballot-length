@@ -72,3 +72,11 @@ all-subsampling-results.pickle 700 trials
 all-subsampling-results-backup.pickle 100 trials
 
 uncertain-subsampling-results.pickle uncertain elections
+
+### Scripts
+* `sampling_uncertainty`: creates the oracle vs forecaster means and standard deviation plots. For efficiency, groups elections into different batches as specified in `config/runtime_group.csv`. Usage:
+```
+python sampling_uncertainty.py --data_dir elections-all --output_dir debug --config_file runtime_group.csv --group_num 4
+```
+* `real_data.py`: stability of bootstrapped elections.
+* `coverage.py`: coverage and recall of ballots from learned models.
