@@ -18,8 +18,8 @@ import time
 
 # Before: (NUM_POLLS^2 + NUM_POLLS) * NUM_FORECASTING_TRIALS = 5000 
 # After: 2 * NUM_POLLS * NUM_FORECASTING_TRIALS = 3200
-NUM_FORECASTING_TRIALS = 100
-NUM_POLLS = 25
+NUM_FORECASTING_TRIALS = 50
+NUM_POLLS = 20
 NUM_FORECASTER_STDS = 3
 
 def set_macros(group_num):
@@ -106,8 +106,8 @@ def plot_forecaster_vs_oracle(sampling_rates,
 	ax[0].plot(sampling_rates, oracle_mean_by_sampling_rate, color="black", linestyle="--", label="oracle")
 	for forecaster_idx, (forecaster_name, forecaster_mean_by_sampling_rate) in enumerate(forecaster_mean_by_sampling_method.items()):
 		ax[0].plot(
-			x=sampling_rates,
-			y=forecaster_mean_by_sampling_rate,
+			sampling_rates,
+			forecaster_mean_by_sampling_rate,
 			color=utils.colors[forecaster_idx],
 			linestyle="--",
 			label=forecaster_name)
@@ -140,9 +140,9 @@ def plot_forecaster_vs_oracle(sampling_rates,
 
 
 def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
-	sampling_rates = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 0.95, 1.0]
-	samplers = ["Bootstrap", "PL", "Contextual"]
-	forecasters = ["Contextual", "Contextual By Length"]
+	sampling_rates = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 1.0]
+	samplers = ["Contextual By Length", "Mallows Dispersion 1", "Contextual Perturbation Dispersion 1", "Uniform"]
+	forecasters = []
 
 	oracle_mean_by_sampling_rate = [] #one float entry per sampling ratio
 	forecaster_mean_by_sampling_method = {forecaster: [] for forecaster in forecasters}
@@ -188,15 +188,8 @@ def forecaster_vs_oracle(ballots, ballot_counts, cand_names, actual_winner):
 			# FORECASTER UNCERTAINTY
 			for sampler in samplers:
 				win_probabilities_across_seeds = [oracle_prob_actual_winner_wins]
-				if sampler == "Bootstrap":
-					sampling_model = Bootstrap(cand_names)
-					sampling_model.fit(ballots, oracle_poll)
-				elif sampler == "PL":
-					sampling_model = PLModel(cand_names, use_end_marker=True, include_unranked=True)
-					sampling_model.fit(ballots, oracle_poll)
-				elif sampler == "Contextual":
-					sampling_model = ContextModel(cand_names)
-					sampling_model.fit(ballots, oracle_poll)
+				sampling_model = utils.get_model_object(sampler, cand_names)
+				sampling_model.fit(ballots, oracle_poll)
 
 				for forecaster_seed in range(NUM_POLLS - 1):
 					# get a seed

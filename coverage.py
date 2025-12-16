@@ -118,25 +118,28 @@ def plot_coverage(results, election_name, ci=0.95, ax=None, metric="Coverage"):
 
     fig.savefig(f"plots/coverage/{metric}_{election_name}.pdf", bbox_inches="tight")
 
-
-def get_model(model_name, cand_names):
-	assert model_name in ["Bootstrap", "Plackett-Luce", "Contextual", "Contextual By Length"]
-	if model_name == "Bootstrap":
-		return model.Bootstrap(cand_names)
-	elif model_name == "Plackett-Luce":
-		return model.PLModel(cand_names)
-	elif model_name == "Contextual":
-		return model.ContextModel(cand_names)
-	elif model_name == "Contextual By Length":
-		return model.ContextModel(cand_names, first_choice_prob_by_length=True)
-
 if __name__ == "__main__":
 
 	# sample_ratios = [0.01, 0.02, 0.04, 0.08, 0.1, 0.16, 0.2, 0.32, 0.64, 0.95, 1.0]
 	# sample_ratios = [0.01]
 	sample_ratios = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 0.75, 0.95, 1.0]
 
-	model_names = ["Bootstrap", "Plackett-Luce", "Contextual", "Contextual By Length"]
+	model_names = [
+		"Bootstrap",
+		"PL",
+		# "Contextual", 
+		"Contextual By Length", 
+		# "Contextual By Length and Smoothing 1",
+		# "Contextual By Length and Smoothing 5",
+		# "Mallows Dispersion 0.5",
+		"Mallows Dispersion 1",
+		# "Mallows Dispersion 5",
+		# "Mallows Dispersion 10",
+		"Contextual Perturbation Dispersion 0.5",
+		"Contextual Perturbation Dispersion 1",
+		"Contextual Perturbation Dispersion 5",
+		"Uniform"
+		]
 	# model_names = ["Bootstrap"]
 
 	filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
@@ -160,7 +163,7 @@ if __name__ == "__main__":
 				trials.append((
 					ballots.copy(), ballot_counts,
 					ballots.copy(), sample_counts,
-					get_model(model_name, cand_names),
+					utils.get_model_object(model_name, cand_names),
 					model_name,
 					sample_ratio
 					))
