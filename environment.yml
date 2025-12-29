@@ -1,0 +1,20 @@
+name: irv
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Core Python version
+  - python=3.9.12
+
+  - numpy=1.20.1
+  - scipy=1.6.1
+  - tqdm
+  - pyyaml=5.4.1
+  - matplotlib
+  - scikit-learn
+
+
+  # Optional: Jupyter support
+  - jupyterlab
+  - ipykernel

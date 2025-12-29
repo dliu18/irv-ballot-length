@@ -70,9 +70,9 @@ def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
 
     if with_replacement:
         p = np.array(ballot_counts) / n
-        return rng.multinomial(sample_size, pvals=p)
+        return tuple(rng.multinomial(sample_size, pvals=p))
     else:
-        return rng.multivariate_hypergeometric(ballot_counts, sample_size)
+        return tuple(rng.multivariate_hypergeometric(ballot_counts, sample_size))
         # assert sample_size <= n
 
         # indices = np.concatenate([
@@ -92,6 +92,20 @@ def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
         # assert np.sum(resampled_counts) == sample_size
         # return resampled_counts
 
+
+def filter_zero_ballots(ballots, ballot_counts):
+    assert isinstance(ballots, list) and isinstance(ballot_counts, tuple)
+    
+    non_zero_ballots = []
+    non_zero_counts = []
+    for idx, ballot in enumerate(ballots):
+        if ballot_counts[idx] > 0:
+            non_zero_ballots.append(ballot)
+            non_zero_counts.append(ballot_counts[idx])
+
+    assert np.sum(non_zero_counts) == np.sum(ballot_counts)
+
+    return non_zero_ballots, tuple(non_zero_counts)
 
 def load_all_preflib_elections(election_dir=""):
     elections = []
@@ -303,6 +317,45 @@ def edit_distance_partial(ballot1, ballot2, all_cands):
 
     return dp[m][n]
 
+def build_tree(prefix, cands, nodes):
+    if len(prefix) == len(cands):
+        return
+
+    unseen = [cand for cand in cands if cand not in prefix]
+    for cand in unseen:
+        next_prefix = prefix + [cand]
+        nodes.append(next_prefix)
+        build_tree(next_prefix, cands, nodes)
+
+
+def KL(P, Q, all_ballots):
+    total = 0
+    for ballot in all_ballots:
+        tup = tuple(ballot)
+        if P[tup] > 0:
+            Q_val = Q[tup]
+            if Q_val == 0:
+                total = np.inf
+                break
+            else:
+                total += P[tup] * (np.log(P[tup]) - np.log(Q_val))
+    return total
+
+def l2(P, Q, all_ballots):
+    total = 0
+    for ballot in all_ballots:
+        tup = tuple(ballot)
+        assert tup in P
+
+        if tup in Q:
+            total += (P[tup] - Q[tup])**2
+        else:
+            total += P[tup]**2
+
+    for ballot_tup in Q:
+        if ballot_tup not in P:
+            total += Q[ballot_tup]**2
+    return total
 
 if __name__ == "__main__":
 

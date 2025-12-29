@@ -10,10 +10,10 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
+import time
 
-import utils 
-from visualize_ballot_trees import visualize_ballot_tree 
-from irv import run_irv
+import utils
+
 
 # ============================================================
 # Candidate space
@@ -70,13 +70,24 @@ class InteractionChoiceModel(nn.Module):
         candidate_space: CandidateSpace,
         *,
         init_scale: float = 0.01,
+        context_effects: bool = True,
+        l2_lambda: float = 0.0,
+        laplacian_lambda: float = 0.0,
         rank_heterogeneous: bool = False,
+        skip_zeros: bool = False
     ):
         super().__init__()
         self.space = candidate_space
         self.m = candidate_space.m
         self.end_action = self.m
         self.num_actions = self.m + 1
+        self.skip_zeros = skip_zeros
+
+        self.context_effects = context_effects
+
+        # Regularization coefficients
+        self.l2_lambda = float(l2_lambda)
+        self.laplacian_lambda = float(laplacian_lambda)
 
         self.rank_heterogeneous = rank_heterogeneous
         self.num_ranks = self.m if rank_heterogeneous else 1
@@ -111,10 +122,11 @@ class InteractionChoiceModel(nn.Module):
         r = self._rank_index(prefix_len)
         V = self.theta[r].clone()
 
-        chosen = [i for i in range(self.m) if (state >> i) & 1]
-        if chosen:
-            idx = torch.tensor(chosen, device=V.device)
-            V = V + self.U[r].index_select(0, idx).mean(dim=0)
+        if self.context_effects:
+            chosen = [i for i in range(self.m) if (state >> i) & 1]
+            if chosen:
+                idx = torch.tensor(chosen, device=V.device)
+                V = V + self.U[r].index_select(0, idx).mean(dim=0)
 
         return V
 
@@ -154,12 +166,26 @@ class InteractionChoiceModel(nn.Module):
         total = counts_t.sum().clamp_min(1.0)
 
         logps = []
-        for r in rankings:
+        for idx, r in enumerate(rankings):
             idx = self.space.encode_ranking(r)
             logps.append(self.log_prob_ranking_idx(idx))
         logps = torch.stack(logps)
 
-        return -(counts_t * logps).sum() / total
+        base_loss = -(counts_t * logps).sum() / total
+
+        reg = torch.tensor(0.0, device=device)
+
+        # (1) L2 regularization on parameters
+        if self.l2_lambda != 0.0:
+            reg = reg + self.l2_lambda * (self.theta.pow(2).sum() + self.U.pow(2).sum())
+
+        # (2) Smoothness across neighboring ranks (only relevant if rank-heterogeneous)
+        if self.laplacian_lambda != 0.0 and self.num_ranks > 1:
+            dtheta = self.theta[1:] - self.theta[:-1]
+            dU = self.U[1:] - self.U[:-1]
+            reg = reg + self.laplacian_lambda * (dtheta.pow(2).sum() + dU.pow(2).sum())
+
+        return base_loss + reg
 
     # ---------------- public API ----------------
 
@@ -188,18 +214,8 @@ class InteractionChoiceModel(nn.Module):
         - Prints fixed effects theta to stdout.
         - Plots interaction matrices U as annotated heatmaps.
         - Saves ALL heatmaps (one per rank) into a single file.
-
-        Args:
-            rank: if rank_heterogeneous, choose a single rank to display;
-                  if None, display all ranks.
-            precision: decimal precision for printed theta and heatmap annotations.
-            heatmap_path: output file path (e.g. .pdf or .png).
-            figsize_per_rank: size of each heatmap figure.
-            cmap: matplotlib colormap for U heatmaps.
         """
-        import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
-        import numpy as np
 
         idx_to_id = self.space.idx_to_id
         m = self.m
@@ -260,13 +276,13 @@ class InteractionChoiceModel(nn.Module):
                 cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                 cbar.set_label("u_{ij}", rotation=270, labelpad=15)
 
-                # ---------- Cell annotations ----------
-                vmax = np.nanmax(np.abs(U_r))
+                # Cell annotations
+                vmax = float(np.nanmax(np.abs(U_r))) if U_r.size > 0 else 0.0
                 threshold = 0.5 * vmax if vmax > 0 else 0.0
 
                 for i in range(U_r.shape[0]):
                     for j in range(U_r.shape[1]):
-                        val = U_r[i, j]
+                        val = float(U_r[i, j])
                         text_color = "white" if abs(val) > threshold else "black"
                         ax.text(
                             j,
@@ -275,7 +291,7 @@ class InteractionChoiceModel(nn.Module):
                             ha="center",
                             va="center",
                             color=text_color,
-                            fontsize=12,
+                            fontsize=8,
                         )
 
                 fig.tight_layout()
@@ -302,6 +318,10 @@ def fit_choice_model(
     log_every: int = 1,
     plot_loss: bool = False,
     rank_heterogeneous: bool = False,
+    context_effects: bool = True,
+    l2_lambda: float = 0.0,
+    laplacian_lambda: float = 0.0,
+    skip_zeros: bool = False
 ) -> Tuple[InteractionChoiceModel, List[float]]:
 
     if seed is not None:
@@ -312,13 +332,17 @@ def fit_choice_model(
         space,
         init_scale=init_scale,
         rank_heterogeneous=rank_heterogeneous,
+        context_effects=context_effects,
+        l2_lambda=l2_lambda,
+        laplacian_lambda=laplacian_lambda,
+        skip_zeros=skip_zeros
     ).to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
     losses, iters = [], []
 
-    for t in tqdm(range(1, steps + 1)):
+    for t in range(1, steps + 1):
         opt.zero_grad(set_to_none=True)
         loss = model.nll_from_counts(rankings, counts)
         loss.backward()
@@ -329,37 +353,15 @@ def fit_choice_model(
             iters.append(t)
 
     if plot_loss:
-        import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         ax.plot(iters, losses)
         ax.set_xlabel("Step")
-        ax.set_ylabel("Weighted NLL")
+        ax.set_ylabel("Weighted NLL (+ regularization)")
         ax.set_title("Training loss")
         fig.savefig("plots/choice-model-loss.pdf", bbox_inches="tight")
 
     return model, losses
 
-def build_tree(prefix, cands, nodes):
-    if len(prefix) == len(cands):
-        return
-
-    unseen = [cand for cand in cands if cand not in prefix]
-    for cand in unseen:
-        next_prefix = prefix + [cand]
-        nodes.append(next_prefix)
-        build_tree(next_prefix, cands, nodes)
-
-
-def KL(P, Q, all_ballots):
-    total = 0
-    for ballot in all_ballots:
-        tup = tuple(ballot)
-        if P[tup] > 0:
-            Q_val = 1e-6
-            if Q[tup] > 0:
-                Q_val = Q[tup]
-            total += P[tup] * (np.log(P[tup]) - np.log(Q_val))
-    return total
 
 if __name__ == "__main__":
 
@@ -390,11 +392,11 @@ if __name__ == "__main__":
     #     steps=100,
     #     log_every=1,
     #     plot_loss=True,
-    #     rank_heterogeneous=True,
+    #     rank_heterogeneous=False
     # )
 
     # simulated_ballots = []
-    # build_tree([], filtered_cands, simulated_ballots)
+    # utils.build_tree([], filtered_cands, simulated_ballots)
 
     # n = np.sum(filtered_ballot_counts)
     # simulated_counts = []
@@ -406,11 +408,127 @@ if __name__ == "__main__":
     #     filtered_cand_names,
     #     simulated_ballots,
     #     tuple(simulated_counts),
-    #     title="burlington-choice-model"
+    #     title="burlington-choice-model",
+    #     aggregate_prefixes=True
     #     )
 
     # model.display_parameters(precision=3)
 
+
+    # CHOICE MODEL EVAL WITH KL DIVERGENCE
+
+    # burlington_filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
+    # # burlington_filename = "data/preflib/elections-all/sf/ED-00021-00000007.toi"
+    
+    # ballots, ballot_counts, cand_names, skipped_votes = \
+    #     utils.read_preflib(burlington_filename)
+    # n = np.sum(ballot_counts)
+
+    # cands = list(cand_names.keys())
+    # all_possible_ballots = []
+    # utils.build_tree([], cands, all_possible_ballots)
+
+    # true_distribution = {
+    #     tuple(ballot): ballot_counts[ballot_idx] / n
+    #     for ballot_idx, ballot in enumerate(ballots)
+    # }
+    # for ballot in all_possible_ballots:
+    #     if tuple(ballot) not in true_distribution:
+    #         true_distribution[tuple(ballot)] = 0
+
+
+    # sampling_rates = [0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.0]
+
+
+    # bootstrap_div_means = []
+    # rank_homo_div_means = []
+    # rank_hetero_div_means = []
+
+    # n_trials = 1
+
+    # for sampling_rate in sampling_rates:
+    #     sample_size = int(sampling_rate * n)
+    #     bootstrap_div = []
+    #     rank_homo_div = []
+    #     rank_hetero_div = []
+
+    #     for trial_num in range(n_trials):
+    #         sample_counts = utils.resample(ballot_counts, sample_size, seed=trial_num)
+            
+    #         ## Bootstrap
+    #         bootstrap_distribution = {
+    #             tuple(ballot): sample_counts[ballot_idx]
+    #             for ballot_idx, ballot in enumerate(ballots)
+    #         }
+    #         inferred_distribution = {}
+    #         for ballot in all_possible_ballots:
+    #             ballot_count = 1 # smoothing parameter
+    #             if tuple(ballot) in bootstrap_distribution:
+    #                 ballot_count += bootstrap_distribution[tuple(ballot)]
+
+    #             inferred_distribution[tuple(ballot)] = ballot_count / (sample_size + len(all_possible_ballots))
+    #         assert abs(np.sum(list(inferred_distribution.values())) - 1.0) < 1e-7
+
+    #         bootstrap_div.append(utils.KL(true_distribution, inferred_distribution, all_possible_ballots))
+
+    #         ## Rank Homo
+    #         model, losses = fit_choice_model(
+    #             candidates=list(cand_names.keys()),
+    #             rankings=ballots,
+    #             counts=sample_counts,
+    #             lr=0.1,
+    #             steps=50,
+    #             log_every=1,
+    #             plot_loss=False,
+    #             rank_heterogeneous=False,
+    #         )
+
+    #         inferred_distribution = {}
+    #         p_empty_ballot = model.prob_ranking([])
+    #         for ballot in all_possible_ballots:
+    #             p_ballot = model.prob_ranking(ballot)
+    #             inferred_distribution[tuple(ballot)] = p_ballot / (1 - p_empty_ballot)
+    #         rank_homo_div.append(utils.KL(true_distribution, inferred_distribution, all_possible_ballots))
+    #         # rank_homo_div.append(0)
+
+    #         ## Rank Hetero
+    #         model, losses = fit_choice_model(
+    #             candidates=list(cand_names.keys()),
+    #             rankings=ballots,
+    #             counts=sample_counts,
+    #             lr=0.1,
+    #             steps=50,
+    #             log_every=1,
+    #             plot_loss=False,
+    #             rank_heterogeneous=True,
+    #         )
+
+    #         inferred_distribution = {}
+    #         for ballot in all_possible_ballots:
+    #             p_ballot = model.prob_ranking(ballot)
+    #             inferred_distribution[tuple(ballot)] = p_ballot
+    #         rank_hetero_div.append(utils.KL(true_distribution, inferred_distribution, all_possible_ballots))
+    #         # rank_hetero_div.append(0)
+
+    #     bootstrap_div_means.append(np.mean(bootstrap_div))
+    #     rank_homo_div_means.append(np.mean(rank_homo_div))
+    #     rank_hetero_div_means.append(np.mean(rank_hetero_div))
+
+    # fig, ax = plt.subplots()
+
+    # ax.plot(sampling_rates, bootstrap_div_means, label="Bootstrap")
+    # ax.plot(sampling_rates, rank_homo_div_means, label="Rank Homogenous")
+    # ax.plot(sampling_rates, rank_hetero_div_means, label="Rank Heterogeneous")
+
+    # ax.set_xlabel("Sampling Rate")
+    # ax.set_ylabel("KL Divergence with True Distribution")
+    # ax.set_yscale("log")
+    # ax.legend()
+    # ax.grid()
+
+    # fig.savefig("plots/compare_choice_models.pdf", bbox_inches="tight")
+
+    # EVALUATE EFFICIENCY GAINS OF REMOVING BALLOTS WITH ZERO COUNT
 
     burlington_filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
     # burlington_filename = "data/preflib/elections-all/sf/ED-00021-00000007.toi"
@@ -419,103 +537,35 @@ if __name__ == "__main__":
         utils.read_preflib(burlington_filename)
     n = np.sum(ballot_counts)
 
-    cands = list(cand_names.keys())
-    all_possible_ballots = []
-    build_tree([], cands, all_possible_ballots)
 
-    true_distribution = {
-        tuple(ballot): ballot_counts[ballot_idx] / n
-        for ballot_idx, ballot in enumerate(ballots)
-    }
-    for ballot in all_possible_ballots:
-        if tuple(ballot) not in true_distribution:
-            true_distribution[tuple(ballot)] = 0
+    sample_size = int(0.01 * n)
+    sample_counts = utils.resample(ballot_counts, sample_size, seed=0)
 
+    non_zero_ballots, non_zero_ballot_counts = utils.filter_zero_ballots(ballots, sample_counts)
 
-    sampling_rates = [0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.0]
+    # start = time.time()
+    # model, losses = fit_choice_model(
+    #     candidates=list(cand_names.keys()),
+    #     rankings=ballots,
+    #     counts=sample_counts,
+    #     lr=0.1,
+    #     steps=50,
+    #     log_every=1,
+    #     plot_loss=False,
+    #     rank_heterogeneous=True,
+    # )
+    # print(f"Runtime w/o filtering: {round(time.time() - start, 3)}")
 
-
-    bootstrap_div_means = []
-    rank_homo_div_means = []
-    rank_hetero_div_means = []
-
-    n_trials = 1
-
-    for sampling_rate in sampling_rates:
-        sample_size = int(sampling_rate * n)
-        bootstrap_div = []
-        rank_homo_div = []
-        rank_hetero_div = []
-
-        for trial_num in range(n_trials):
-            sample_counts = utils.resample(ballot_counts, sample_size, seed=trial_num)
-            
-            ## Bootstrap
-            bootstrap_distribution = {
-                tuple(ballot): sample_counts[ballot_idx] / sample_size
-                for ballot_idx, ballot in enumerate(ballots)
-            }
-            inferred_distribution = {}
-            for ballot in all_possible_ballots:
-                p_ballot = 0
-                if tuple(ballot) in bootstrap_distribution:
-                    p_ballot = bootstrap_distribution[tuple(ballot)]
-
-                inferred_distribution[tuple(ballot)] = p_ballot
-            bootstrap_div.append(KL(true_distribution, inferred_distribution, all_possible_ballots))
-
-            ## Rank Homo
-            model, losses = fit_choice_model(
-                candidates=list(cand_names.keys()),
-                rankings=ballots,
-                counts=sample_counts,
-                lr=0.1,
-                steps=50,
-                log_every=1,
-                plot_loss=False,
-                rank_heterogeneous=False,
-            )
-
-            inferred_distribution = {}
-            for ballot in all_possible_ballots:
-                p_ballot = model.prob_ranking(ballot)
-                inferred_distribution[tuple(ballot)] = p_ballot
-            rank_homo_div.append(KL(true_distribution, inferred_distribution, all_possible_ballots))
-            # rank_homo_div.append(0)
-
-            ## Rank Hetero
-            model, losses = fit_choice_model(
-                candidates=list(cand_names.keys()),
-                rankings=ballots,
-                counts=sample_counts,
-                lr=0.1,
-                steps=50,
-                log_every=1,
-                plot_loss=False,
-                rank_heterogeneous=True,
-            )
-
-            inferred_distribution = {}
-            for ballot in all_possible_ballots:
-                p_ballot = model.prob_ranking(ballot)
-                inferred_distribution[tuple(ballot)] = p_ballot
-            rank_hetero_div.append(KL(true_distribution, inferred_distribution, all_possible_ballots))
-            # rank_hetero_div.append(0)
-
-        bootstrap_div_means.append(np.mean(bootstrap_div))
-        rank_homo_div_means.append(np.mean(rank_homo_div))
-        rank_hetero_div_means.append(np.mean(rank_hetero_div))
-
-    fig, ax = plt.subplots()
-
-    ax.plot(sampling_rates, bootstrap_div_means, label="Bootstrap")
-    ax.plot(sampling_rates, rank_homo_div_means, label="Rank Homogenous")
-    ax.plot(sampling_rates, rank_hetero_div_means, label="Rank Heterogeneous")
-
-    ax.set_xlabel("Sampling Rate")
-    ax.set_ylabel("KL Divergence with True Distribution")
-    ax.set_yscale("log")
-    ax.legend()
-    ax.grid()
-
-    fig.savefig("plots/compare_choice_models.pdf", bbox_inches="tight")
+    start = time.time()
+    model, losses = fit_choice_model(
+        candidates=list(cand_names.keys()),
+        rankings=non_zero_ballots,
+        counts=non_zero_ballot_counts,
+        lr=0.1,
+        steps=50,
+        log_every=1,
+        plot_loss=False,
+        rank_heterogeneous=True,
+        skip_zeros=True
+    )
+    print(f"Runtime w/ filtering: {round(time.time() - start, 3)}")
