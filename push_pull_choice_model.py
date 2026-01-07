@@ -355,6 +355,7 @@ def fit_choice_model(
     if plot_loss:
         fig, ax = plt.subplots()
         ax.plot(iters, losses)
+        ax.set_yscale("log")
         ax.set_xlabel("Step")
         ax.set_ylabel("Weighted NLL (+ regularization)")
         ax.set_title("Training loss")
@@ -530,16 +531,17 @@ if __name__ == "__main__":
 
     # EVALUATE EFFICIENCY GAINS OF REMOVING BALLOTS WITH ZERO COUNT
 
-    burlington_filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
+    filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
+
     # burlington_filename = "data/preflib/elections-all/sf/ED-00021-00000007.toi"
     
     ballots, ballot_counts, cand_names, skipped_votes = \
-        utils.read_preflib(burlington_filename)
+        utils.read_preflib(filename)
     n = np.sum(ballot_counts)
 
 
-    sample_size = int(0.01 * n)
-    sample_counts = utils.resample(ballot_counts, sample_size, seed=0)
+    sample_size = int(n)
+    sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=False, seed=0)
 
     non_zero_ballots, non_zero_ballot_counts = utils.filter_zero_ballots(ballots, sample_counts)
 
@@ -564,7 +566,7 @@ if __name__ == "__main__":
         lr=0.1,
         steps=50,
         log_every=1,
-        plot_loss=False,
+        plot_loss=True,
         rank_heterogeneous=True,
         skip_zeros=True
     )

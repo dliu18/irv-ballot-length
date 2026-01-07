@@ -93,6 +93,27 @@ def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
         # return resampled_counts
 
 
+def get_ballot_sample_from_distribution(ballot_distribution, num_samples, seed=0):
+    ballots = [ballot for ballot in ballot_distribution]
+    probs = np.array([ballot_distribution[ballot] for ballot in ballots])
+    assert abs(np.sum(probs) - 1) < 1e-6
+    probs /= np.sum(probs)
+
+    rng = np.random.default_rng(seed=seed)
+    sampled_idxs = rng.choice(
+        a=len(ballots),
+        size=num_samples,
+        p=probs)
+
+    ctr = Counter()
+    for idx in sampled_idxs:
+        ctr[ballots[idx]] += 1
+    items = ctr.most_common()
+    output_ballots = [np.array(list(tpl)) for tpl, _ in items]
+    ballot_counts = tuple([cnt for _, cnt in items])
+
+    return output_ballots, ballot_counts
+    
 def filter_zero_ballots(ballots, ballot_counts):
     assert isinstance(ballots, list) and isinstance(ballot_counts, tuple)
     
@@ -341,20 +362,17 @@ def KL(P, Q, all_ballots):
                 total += P[tup] * (np.log(P[tup]) - np.log(Q_val))
     return total
 
-def l2(P, Q, all_ballots):
+def l2(P, Q):
     total = 0
-    for ballot in all_ballots:
-        tup = tuple(ballot)
-        assert tup in P
-
+    for tup in P:
         if tup in Q:
             total += (P[tup] - Q[tup])**2
         else:
             total += P[tup]**2
-
-    for ballot_tup in Q:
-        if ballot_tup not in P:
-            total += Q[ballot_tup]**2
+    for tup in Q:
+        if tup not in P:
+            total += Q[tup]**2
+            
     return total
 
 if __name__ == "__main__":

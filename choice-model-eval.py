@@ -34,18 +34,21 @@ optimized_l2_lambda = float(sys.argv[2])
 optimized_laplacian_lambda = float(sys.argv[3])
 
 data_dir = "elections-all"
-num_trials = 50
-model_names = ["Bootstrap", "PL", "PL + Rank", "PL + Context", "PL + Rank + Context", "PL + Rank + Context + Reg"]
+NUM_TRIALS = 75
+# model_names = ["Bootstrap", "PL", "PL + Rank", "PL + Context", "PL + Rank + Context", "PL + Rank + Context + Reg"]
+model_names = ["Bootstrap", "PL + Context",  "PL + Rank + Context + Reg"]
 
 
 # model_names = ["PL + Rank + Context + Reg"]
 
 max_k = 6
-training_steps = 50
-num_forecasting_simulations = 1000
+training_steps = 30
+num_forecasting_simulations = 250
 
 # sampling_rates = [0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 0.95, 1.0]
-sample_sizes = np.array([50, 100, 200, 400, 800, 1000, 1600, 2000])
+sample_sizes = np.array([50, 100, 250, 500, 1000, 2000, 4000])
+# sample_sizes = np.array([100])
+
 
 ########### HELPERS ###########
 
@@ -98,27 +101,6 @@ def get_inferred_distribution(model_name, cands, ballots, ballot_counts, ballot_
 			inferred_distribution[tuple(ballot)] = p_ballot / (1 - p_empty_ballot)
 		return inferred_distribution
 
-def get_ballot_sample_from_distribution(ballot_distribution, num_samples, seed=0):
-	ballots = [ballot for ballot in ballot_distribution]
-	probs = np.array([ballot_distribution[ballot] for ballot in ballots])
-	assert abs(np.sum(probs) - 1) < 1e-6
-	probs /= np.sum(probs)
-
-	rng = np.random.default_rng(seed=seed)
-	sampled_idxs = rng.choice(
-		a=len(ballots),
-		size=num_samples,
-		p=probs)
-
-	ctr = Counter()
-	for idx in sampled_idxs:
-		ctr[ballots[idx]] += 1
-	items = ctr.most_common()
-	output_ballots = [np.array(list(tpl)) for tpl, _ in items]
-	ballot_counts = tuple([cnt for _, cnt in items])
-
-	return output_ballots, ballot_counts
-
 def _get_num_possible_ballots(k):
 	total = 0
 	for h in range(1, k + 1):
@@ -170,74 +152,57 @@ if __name__ == "__main__":
 		cand_wins_share_by_sample_size = {
 			model_name: {
 					sample_size: {
-						cand: np.zeros(num_trials) for cand in cands # crucially, there is no filtering at this stage
+						cand: np.zeros(NUM_TRIALS) for cand in cands # crucially, there is no filtering at this stage
 					} for sample_size in sample_sizes
 				}
 			for model_name in model_names
 		}
 
-		for sample_size in tqdm(sample_sizes):			
+		for sample_size in tqdm(sample_sizes):
+			num_trials = NUM_TRIALS
+			if sample_size >= 1000:
+				num_trials = 10		
 			for trial_num in tqdm(range(num_trials)):
 				sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=False, seed=trial_num)
 
+				filtered_cands = cands.copy()
+				filtered_cand_names = cand_names.copy()
+				filtered_ballots = ballots.copy()
+				filtered_counts = sample_counts
+				if k > max_k:
+					elim_votes = run_irv(k, ballots.copy(), sample_counts, cands=cand_names)
+					filtered_cands = utils.get_elim_order(elim_votes)[-max_k:]
+					filtered_cand_names = {cand: full_name for cand, full_name in cand_names.items() if cand in filtered_cands}
+					filtered_ballots, filtered_counts = utils.reduce_election(ballots, sample_counts, filtered_cands)
 				non_zero_ballots, non_zero_ballot_counts = utils.filter_zero_ballots(
-					ballots.copy(),
-					sample_counts)
+					filtered_ballots.copy(),
+					filtered_counts)
+
+				all_possible_ballots = []
+				utils.build_tree([], filtered_cands, all_possible_ballots)
 
 				for model_name in model_names:
 					
-					## Distribution Difference 
-					# inferred_distribution = get_inferred_distribution(
-					# 	model_name,
-					# 	list(cand_names.keys()),
-					# 	non_zero_ballots.copy(), #only for training 
-					# 	non_zero_ballot_counts, #only for training
-					# 	ballot_support=ballots.copy())
-					# KL_by_sample_size[model_name][sample_size].append(
-					# 	utils.l2(true_distribution, inferred_distribution, ballots.copy())
-					# )
-					# inferred_distribution_by_sample_size[model_name][sample_size].append(inferred_distribution)
-
-
-					## Forecasting 
-					start = time.time()
-					filtered_cands = cands.copy()
-					filtered_cand_names = cand_names.copy()
-					filtered_ballots = ballots.copy()
-					filtered_counts = sample_counts
-					if k > max_k:
-						elim_votes = run_irv(k, ballots.copy(), sample_counts, cands=cand_names)
-						filtered_cands = utils.get_elim_order(elim_votes)[-max_k:]
-						filtered_cand_names = {cand: full_name for cand, full_name in cand_names.items() if cand in filtered_cands}
-						filtered_ballots, filtered_counts = utils.reduce_election(ballots, sample_counts, filtered_cands)
-					non_zero_ballots, non_zero_ballot_counts = utils.filter_zero_ballots(
-						filtered_ballots.copy(),
-						filtered_counts)
-					# print(f"Filtering Time: {round(time.time() - start, 3)}")
-
-					start = time.time()
-					all_possible_ballots = []
-					utils.build_tree([], filtered_cands, all_possible_ballots)
-					# print(f"Tree Building Time: {round(time.time() - start, 3)}")
-
-					start = time.time()
+					# Distribution Difference 
 					inferred_distribution = get_inferred_distribution(
 						model_name,
 						filtered_cands,
-						non_zero_ballots.copy(), 
-						non_zero_ballot_counts, 
-						ballot_support=all_possible_ballots)
-					# print(f"Inference Time: {round(time.time() - start, 3)}")
+						non_zero_ballots.copy(), #only for training 
+						non_zero_ballot_counts, #only for training
+						ballot_support=all_possible_ballots.copy())
+					KL_by_sample_size[model_name][sample_size].append(
+						utils.l2(true_distribution, inferred_distribution)
+					)
+					inferred_distribution_by_sample_size[model_name][sample_size].append(inferred_distribution)
 
+
+					## Forecasting 
 					for forecasting_trial in range(num_forecasting_simulations):
-						start = time.time()
-						simulated_ballots, simulated_counts = get_ballot_sample_from_distribution(
+						simulated_ballots, simulated_counts = utils.get_ballot_sample_from_distribution(
 							inferred_distribution,
 							num_samples=n,
 							seed=forecasting_trial)
-						# print(f"Simulation Time: {round(time.time() - start, 3)}")
 
-						start = time.time()
 						elim_votes = run_irv(
 							len(filtered_cands), 
 							simulated_ballots.copy(), 
@@ -245,16 +210,15 @@ if __name__ == "__main__":
 							cands=filtered_cands)
 						winner = max(elim_votes, key=elim_votes.get)
 						cand_wins_share_by_sample_size[model_name][sample_size][winner][trial_num] += 1
-						# print(f"IRV Time: {round(time.time() - start, 3)}")
 
-			filename = f"results/push_pull_eval/win_shares_by_election_{target_election}.pickle"
+			filename = f"results/push_pull_eval/win_shares_by_election_200_trials_{target_election}.pickle"
 			candidate_win_shares_by_election[election_name] = cand_wins_share_by_sample_size
-			_write_to_file(candidate_win_shares_by_election)
+			_write_to_file(candidate_win_shares_by_election, filename)
 
-			# filename = f"results/push_pull_eval/l2_by_election_{target_election}.pickle"
-			# KL_by_election[election_name] = KL_by_sample_size
-			# _write_to_file(KL_by_election, filename)
+			filename = f"results/push_pull_eval/l2_by_election_200_trials_{target_election}.pickle"
+			KL_by_election[election_name] = KL_by_sample_size
+			_write_to_file(KL_by_election, filename)
 
-			# filename = f"results/push_pull_eval/inferred_distribution_by_election_reg_{target_election}.pickle"
-			# inferred_distribution_by_election[election_name] = inferred_distribution_by_sample_size
-			# _write_to_file(inferred_distribution_by_election, filename)
+			filename = f"results/push_pull_eval/inferred_distribution_by_election_200_trials_{target_election}.pickle"
+			inferred_distribution_by_election[election_name] = inferred_distribution_by_sample_size
+			_write_to_file(inferred_distribution_by_election, filename)

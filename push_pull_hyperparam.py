@@ -6,10 +6,13 @@ from tqdm import tqdm
 import utils 
 
 from push_pull_choice_model import fit_choice_model
+from irv import run_irv
 
 seed = 0
 k = 5
 size = 100
+
+max_cands = 6
 
 training_steps = 50
 
@@ -47,13 +50,26 @@ def get_cross_val_nll(ballots, count_chunks, val_chunk_idx,
 			continue
 		training_counts += chunk
 	training_counts = tuple(training_counts)
+	val_counts = tuple(count_chunks[val_chunk_idx])
+
+	filtered_cands = cands.copy()
+	filtered_training_ballots = ballots.copy()
+	filtered_val_ballots = ballots.copy()
+
+	num_cands = len(cands)
+
+	if num_cands > max_cands:
+		elim_votes = run_irv(num_cands, ballots.copy(), training_counts, cands=cands)
+		filtered_cands = utils.get_elim_order(elim_votes)[-max_cands:]
+		filtered_training_ballots, training_counts = utils.reduce_election(ballots.copy(), training_counts, filtered_cands)
+		filtered_val_ballots, val_counts = utils.reduce_election(ballots.copy(), val_counts, filtered_cands)
 
 	non_zero_ballots, non_zero_ballot_counts = utils.filter_zero_ballots(
-		ballots,
+		filtered_training_ballots,
 		training_counts)
 
 	model, _ = fit_choice_model(
-		candidates=cands,
+		candidates=filtered_cands,
 		rankings=non_zero_ballots,
 		counts=non_zero_ballot_counts,
 		lr=0.1,
@@ -65,9 +81,8 @@ def get_cross_val_nll(ballots, count_chunks, val_chunk_idx,
 		laplacian_lambda=laplacian_lambda
 		)
 
-	val_counts = tuple(count_chunks[val_chunk_idx])
 	nll = 0.0
-	for idx, ballot in enumerate(ballots):
+	for idx, ballot in enumerate(filtered_val_ballots):
 		if val_counts[idx] == 0:
 			continue
 

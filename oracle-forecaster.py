@@ -18,13 +18,13 @@ For each real-world election, according to the oracle election profile, how ofte
 '''
 
 ########### MACROS ###########
-target_election = "burlington-02"
+target_elections = ["burlington-02", "glasgow-04", "sf-11", "pierce-03"]
 data_dir = "elections-all"
 num_trials = 1000
 model_names = ["Bootstrap"]
 # model_names = ["Bootstrap", "PL + Rank + Context"]
 
-sampling_rates = [0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 0.95, 1.0]
+sampling_rates = [1.0]
 
 ########### HELPERS ###########
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
 	for collection, file_name, ballots, ballot_counts, cand_names, _ in elections:
 		election_name = f"{collection}-{file_name[-6:-4]}"
-		if target_election != "" and election_name != target_election:
+		if election_name not in target_elections:
 			continue
 		print(f"Processing: {election_name}")
 		
@@ -65,10 +65,10 @@ if __name__ == "__main__":
 			} for sampling_rate in sampling_rates
 		}
 
-		for sampling_rate in tqdm(sampling_rates):
+		for sampling_rate in sampling_rates:
 			sample_size = int(sampling_rate * n)
 			
-			for trial_num in range(num_trials):
+			for trial_num in tqdm(range(num_trials)):
 				sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=True, seed=trial_num)
 
 				elim_votes = run_irv(

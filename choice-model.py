@@ -241,47 +241,57 @@ if __name__ == "__main__":
     # ]
     # counts = [10, 5, 3]
 
-    burlington_filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
+    filename = "data/preflib/elections-all/burlington/ED-00005-00000002.toi"
     # burlington_filename = "data/preflib/elections-all/sf/ED-00021-00000007.toi"
     
     ballots, ballot_counts, cand_names, skipped_votes = \
-        utils.read_preflib(burlington_filename)
+        utils.read_preflib(filename)
 
-
-    elim_votes = run_irv(len(cand_names), ballots.copy(), ballot_counts, cands=cand_names)
-    filtered_cands = utils.get_elim_order(elim_votes)[-4:]
-    filtered_cand_names = {cand: full_name.split(" ")[-1] for cand, full_name in cand_names.items() if cand in filtered_cands}
-    filtered_ballots, filtered_ballot_counts = utils.reduce_election(ballots, ballot_counts, filtered_cands)
-
-    visualize_ballot_tree(
-        filtered_cand_names,
-        filtered_ballots,
-        filtered_ballot_counts,
-        title="burlington-original"
-        )
 
     model, losses = fit_choice_model(
-        candidates=list(filtered_cand_names.keys()),
-        rankings=filtered_ballots,
-        counts=filtered_ballot_counts,
+        candidates=list(cand_names.keys()),
+        rankings=ballots,
+        counts=ballot_counts,
         lr=0.1,
-        steps=100,
+        steps=50,
         log_every=1,
         plot_loss=True,
     )
 
-    simulated_ballots = []
-    build_tree([], filtered_cands, simulated_ballots)
+    # elim_votes = run_irv(len(cand_names), ballots.copy(), ballot_counts, cands=cand_names)
+    # filtered_cands = utils.get_elim_order(elim_votes)[-4:]
+    # filtered_cand_names = {cand: full_name.split(" ")[-1] for cand, full_name in cand_names.items() if cand in filtered_cands}
+    # filtered_ballots, filtered_ballot_counts = utils.reduce_election(ballots, ballot_counts, filtered_cands)
 
-    n = np.sum(filtered_ballot_counts)
-    simulated_counts = []
-    for ballot in simulated_ballots:
-        p_ballot = model.prob_ranking(ballot)
-        simulated_counts.append(int(p_ballot * n))
+    # visualize_ballot_tree(
+    #     filtered_cand_names,
+    #     filtered_ballots,
+    #     filtered_ballot_counts,
+    #     title="burlington-original"
+    #     )
 
-    visualize_ballot_tree(
-        filtered_cand_names,
-        simulated_ballots,
-        tuple(simulated_counts),
-        title="burlington-choice-model"
-        )
+    # model, losses = fit_choice_model(
+    #     candidates=list(filtered_cand_names.keys()),
+    #     rankings=filtered_ballots,
+    #     counts=filtered_ballot_counts,
+    #     lr=0.1,
+    #     steps=50,
+    #     log_every=1,
+    #     plot_loss=True,
+    # )
+
+    # simulated_ballots = []
+    # build_tree([], filtered_cands, simulated_ballots)
+
+    # n = np.sum(filtered_ballot_counts)
+    # simulated_counts = []
+    # for ballot in simulated_ballots:
+    #     p_ballot = model.prob_ranking(ballot)
+    #     simulated_counts.append(int(p_ballot * n))
+
+    # visualize_ballot_tree(
+    #     filtered_cand_names,
+    #     simulated_ballots,
+    #     tuple(simulated_counts),
+    #     title="burlington-choice-model"
+    #     )
