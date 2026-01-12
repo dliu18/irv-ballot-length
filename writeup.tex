@@ -1,0 +1,280 @@
+\documentclass{article}
+\usepackage{arxiv}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage{thmtools}
+\usepackage{thm-restate}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\newcommand\mycommfont[1]{\rmfamily{#1}}
+\newtheorem{theorem}{Theorem}
+\SetCommentSty{mycommfont}
+
+
+\input{generic_aliases}
+
+\newtheorem{remark}{Remark}
+\newtheorem{definition}{Definition}
+\newtheorem{assumption}{Assumption}
+\renewcommand*{\theassumption}{\Alph{assumption}}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\title{Choice Modeling for Ranked Choice Voting}
+
+
+
+%\date{September 9, 1985}	% Here you can change the date presented in the paper title
+%\date{} 					% Or removing it
+
+\author{
+	%% \AND
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+	%% \And
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+	%% \And
+	%% Coauthor \\
+	%% Affiliation \\
+	%% Address \\
+	%% \texttt{email} \\
+}
+
+% Uncomment to remove the date
+%\date{}
+
+% Uncomment to override  the `A preprint' in the header
+%\renewcommand{\headeright}{Technical Report}
+%\renewcommand{\undertitle}{Technical Report}
+\renewcommand{\shorttitle}{Choice Modeling for Ranked Choice Voting}
+
+
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Our goal is to forecast IRV elections and provide a measure of uncertainty given a sample of ballots. We assume that ballots in IRV elections are samples from a true \emph{election profile}, a discrete distribution over all partial orderings. This note details our findings from estimating the election profile from samples. Because real-world ranked choice ballots exhibit candidate co-occurrence patterns, we utilize the family of context-dependent, rank-heterogeneous choice models introduced in \citet{rank2023awadelkarim} to capture context effects from ballot samples. We compare against an independent-ballot baseline which models the probability of each ballot independently; sampling from this baseline is equivalent to bootstrapping the ballot samples. We evaluate the estimated election profiles along two dimensions: first, we measure the distribution distance between the estimated and true profiles, and second, we measure whether ballots sampled form the estimated profile yield IRV outcomes similar to samples from the true profile. We show that for sample sizes $<1,000$ contextual choice models reduce distribution error. For election outcomes, the choice models do not reduce the mean outcome error relative to the independent-ballot model but do reduce the variance. Interestingly, the choice models that minimize distribution error are not the same models that minimize outcome error. We conclude with potential next steps.
+\end{abstract}
+
+\section{Problem Definition and Modeling Approach}
+
+Suppose that in a ranked-choice election over $k$ candidates, each ballot is sampled i.i.d from an election profile, a distribution over all partial orderings of the $k$ candidates.
+%
+That is given a set of candidates $\mathcal{U} := [k]$ an election profile $D$ specifies the probability of a partial ranking $R$ for all partial rankings of length $< k$.\footnote{In ranked-choice voting a ballot $R$ of length $k$ is operationally equivalent to its top $k-1$ truncation because if $k-1$ candidates are eliminated, the final candidate wins regardless of whether it is listed at the end of $R$.}
+%
+For example if $k=3$, $\mathcal{D}$ specifies a probability for each ranking in $\mathcal{U} = \{$(1), (2), (3), (1, 2), (1,3), (2, 1), (2, 3), (3, 1), (3, 2)$\}$.
+
+\paragraph{Problem} Our task is to 1) estimate an election profile $\hat{\mathcal{D}}$ given $n$ samples from the true profile $\mathcal{D}$ 2) accurately forecast the probability of victory for each candidate. 
+
+Task 1 is a preliminary for Task 2. Concretely, given an election turnout of $N$ voters where $N >> n$, let $\hat{P(i)}$ be the probability that candidate $i$ wins a ranked choice election conducted on $N$ samples of $\hat{\mathcal{D}}$. Here we can interpret $n$ as the size of an election poll.
+
+\paragraph{Baseline Approach} One approach to estimating the election profile is to make no assumptions regarding the election profile's model class and model the probability of each ballot \emph{independently}. Under this independent-ballot model, after minimizing the likelihood of a sample of $n$ rankings $\mathcal{S} := \{R_1, R_2, ..., R_n\}$, the probability of a partial ranking $R'$ is:
+\begin{equation}
+\hat{P}(R') =
+\begin{cases}
+\frac{1}{n}\sum_{i=1}^n \mathbf{1}_{R_i == R'} & R' \in \mathcal{S} \\
+0 & R' \notin \mathcal{S}
+\end{cases}
+\end{equation}
+Sampling from this estimated profile is equivalent to bootstrapping from $\mathcal{S}$.
+
+\paragraph{Context Effects} The independent-ballot model, however, does not leverage correlations among the probabilities of partial rankings. Intuitively, the presence of a sampled ranking $R'$ should increase the probability of ``similar'' rankings in $\hat{\mathcal{D}}$. To examine how real-world ballots may be similar to each other, we analyze real-world ballots and find that ballots exhibit co-occurrence patterns. For example, Figure \ref{fig:co-occurrence} shows the consecutive co-occurrence counts of all pairs of candidates in the 2009 Burlington Mayoral election ($n=8,980$); entry $ij$ denotes the fraction of ballots that rank $j$ immediately after $i$ among ballots containing $i$. 
+\begin{figure}
+    \centering
+    \includegraphics[width=0.4\linewidth]{figs/burlington-co-occurence.pdf}
+    \caption{Ballots from the 2009 Burlington Mayoral election exhibit candidate co-occurrence associations. The ratio in row $i$ column $j$ indicates the probability that candidate $j$ immediately follows candidate $i$, conditional on a ballot containing $i$. For instance, 41\% of all ballots containing Bob Kiss (Progressive) have Andy Montroll (Democrat) ranked immediately after Kiss whereas only 15\% rank Kurt Wright (Republican) following Kiss.}
+    \label{fig:co-occurrence}
+\end{figure}
+The frequent co-occurrence of Bob Kiss and Andy Montroll and infrequent co-occurrence of Bob Kiss and Kurt Wright suggests that ballots ranking Kiss immediately before Montroll are more likely than those ranking Kiss immediately before Wright. 
+
+To leverage co-occurrences, and more generally \emph{context effects}, we model the probability of a ballot as a sequence of contextual choices. A contextual choice consist of the selection of a candidate $c_i$ from a choice set $\mathcal{C}$ given a context of already selected candidates $\mathcal{A}$. The probability of such a choice is expressed as $P(c_i \lvert \mathcal{A}, \mathcal{C})$. 
+%
+Let $R = (c_1, c_2, \cdots, c_h)$ be a length $h<k$ ballot where candidate $c_i$ is preferred over $c_j$ for all $i, j$. Under a contextual choice model, the probability of $R$ is decomposed as: 
+\begin{equation} \label{eqn:choice-decomp}
+    P(R) = \prod_{i=1}^h P\left(c_i \lvert \mathcal{A}=\{c_{j|j<i}\}, \mathcal{C}=\{c_{j|j>i}\} \right)
+\end{equation}
+
+A well-studied model of contextual choice is the Rank-Stratified Context-Dependent Model introduced in \citet{rank2023awadelkarim}, which we refer to as RS-CDM. Under the RS-CDM, each item has a (contextual) representative utility $V$. For a fixed-effect $\delta_j$ and a set of contextual coefficients $\left\{u_{ij}\in\mathbf{R} \lvert i\in [k]\backslash j \right\}$, the contextual representative utility of candidate $j$ given a choice set $\mathcal{C}$ and context set $\mathcal{A}$ is:
+\begin{equation}\label{eqn:utility}
+    V\left(j \lvert \mathcal{A}, \mathcal{C}\right) = \delta_j + \frac{1}{\lvert \mathcal{A} \lvert} \sum_{i \in \mathcal{A}} u_{ij}
+\end{equation}
+
+The probability of a choice candidate $j$ given $\mathcal{A}$ and $\mathcal{C}$ is the softmax of the candidate's utility:
+\begin{equation}\label{eqn:choice-prob}
+    P\left(j \lvert \mathcal{A}, \mathcal{C}\right) = \frac{e^{V\left(j \lvert \mathcal{A}, \mathcal{C}\right)}}{\sum_{i \in \mathcal{C}} e^{V\left(i \lvert \mathcal{A}, \mathcal{C}\right)}}
+\end{equation}
+
+Compared to the RS-CDM model as presented in \citet{rank2023awadelkarim}, we omit co-variate features as individual-level features are not available for ranked-choice election data but we do employ both Laplacian regularization to regularize across ranks and $l_2$ parameter regularization.
+% [Provide Eq. 2 and first equation of section 4.2. Note that we do indeed include parameter and Laplacian regularization].
+
+\section{Defining the True Election Profile} 
+We leverage ranked-choice election data made public through PrefLib. However, for a single election instance, how do we obtain the true election profile? In this work, we treat the ballot data for a single election not as a finite sample but as specifying an election profile. That is, if a ranking $R$ is cast $n'$ times in an election of $n$ ballots, $p(R) = n'/n$.\footnote{In the language of finite populations vs super populations, this assumption is equivalent to working exclusively in the space of super populations.}
+
+Figure \ref{fig:true_election_profile_tree} shows the election profile for the 2009 Burlington Mayoral election ($n=8,980$) after reducing the election to the four last-eliminated candidates. The number in each node in the tree indicates the number of voters that cast the corresponding ballot, where the node at Root $\rightarrow$ Kiss corresponds to the partial ballot ${\text{Kiss}}$ and the node Root $\rightarrow$ Kiss $\rightarrow$ Montroll corresponds to the partial ballot $(\text{Kiss}, \text{Montroll})$. The figure shows that the most likely ballot in the profile is a length-1 ballot for Kurt Wright, where $P((\text{Wright})) = \frac{840}{8,980}$.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/burlington_election_profile.pdf}
+    \caption{The true election profile for the 2009 Burlington Mayoral Election after reducing the election to the top-four most competitive candidates. The values in the nodes indicate the frequency of a partial ranking \emph{ending} at the target node. The probabilities in the election profile $\mathcal{D}$ are the listed frequencies normalized by the election size $n = 8,980$.}
+    \label{fig:true_election_profile_tree}
+\end{figure}
+
+In contrast, Figure \ref{fig:bootstrap_election_profile_tree} visualizes the estimated profile from a single sample using the independent ballot model, where the sample size is 50 ballots. Due to the limited sample size, several ballot types are entirely absent and have no support in the estimated profile, e.g. $(\text{Montroll}, \text{Wright}, \text{Smith})$), and others are over represented, e.g. $(\text{Smith}, \text{Kiss}, \text{Montroll})$. 
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/burlington_bootstrap_with_error.pdf}
+    \caption{Estimated election profile using independent-ballot modeling (bootstrap) from a single sample of $50$ ballots from $\mathcal{D}$. The top tree shows the raw estimated profile $\hat{\mathcal{D}}$, where the node values are $n\hat{p}(\text{ballot})$ rounded to the nearest integer, whereas the bottom tree shows the error relative to the true profile. Nodes with no value in the top tree denote ballots with no probability since they were not present in the sample.}
+    \label{fig:bootstrap_election_profile_tree}
+\end{figure}
+
+% An aside: We first observe that each distribution over partial orderings can be mapped to a unique contextual choice distribution over $k$ candidates. 
+
+% * Define the contextual choice distribution 
+% * Formally state the mapping from election profile to contextual choice distribution.
+
+ 
+\section{Experimental Methodology}
+
+\subsection{Data}
+We run experiments on four Preflib datasets, chosen based on the size and prominence of the elections. The elections and their summary statistics are shown in Table \ref{tab:datasets}, where $n$ is the number of ballots cast and $k$ is the number of candidates.
+\begin{table}[]
+    \centering
+    \caption{Preflib Datasets for Evaluation.}
+    \begin{tabular}{lrr}
+         \toprule
+         Election & $n$ & $k$  \\ \midrule
+         Burlington 2009 Mayor & $8,980$ & $6$ \\
+         Glasgow 2008 City Council - Canal Ward & $8,624$ & $11$\\
+         Pierce 2008 County Executive & $299,664$ & $5$ \\
+         San Francisco 2011 Mayor & $195,237$ & $25$\\ \bottomrule
+    \end{tabular}
+    \label{tab:datasets}
+\end{table}
+
+\subsection{Model Instantiations}
+To understand the RS-CDM's performance, we instantiate multiple configurations of the model, each with a subset of the model components enabled, similar to an ablation study. The two main model components in question are: 
+\begin{itemize}
+    \item \textbf{Rank Stratification} Configurations with rank stratificaton enabled train a separate choice model for each ballot rank position. That is, with rank stratification, second-place choices are sampled from a distinct model from first place choices.
+    \item \textbf{Context Effects} When context effects are disabled, the representative utility for a candidate is simply the candidate's fixed effect. Eq. \eqref{eqn:utility} becomes $V(j) = \delta_j$.
+\end{itemize}
+
+Rank Stratification and Context Effects are modeling components that can be included or not included. We instantiate all four possible configurations. When both components are not included, the choice model is equivalent to the Plackett-Luce ranking model, so we label the four configurations as: PL, PL + Rank, PL + Context, PL + Rank + Context. 
+
+Last, we include a fully enabled configuration that adds parameter regularization to PL + Rank + Context. This configuration regularizes the $l_2$ norm of the parameters $\delta_j \forall j \in \mathcal{U}$ and the context effects $u_{ij} \in [k] \times [k]$. This fully enbabled model is equivalent to the RS-CDM model as specified in \citet{rank2023awadelkarim}.
+
+\subsection{Hyperperamater Optimizaton}
+For each dataset, we optimize the regularization hyperparameters $l_2~\lambda$ and $\lambda_{\text{Lap}}$. We sample $200$ ballots from $\mathcal{D}$ and then run 5-fold cross validation, selecting the parameters that minimize the validation negative log likelihood. Figure \ref{fig:hyperparam_grid_search} shows the validation NLL for all configuration, with the optimal one highlighted. For the Pierce County executive and San Francisco mayoral elections, applying minimal regularization yielded the lowest NLL. We conjecture that minimal to no regularization favors elections with low ballot diversity because the choice model can fit exactly to the training ballots, which highly resemble the validation ballots. 
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{figs/hyperparam_grid_search.pdf}
+    \caption{We perform grid search over $\lambda_2$ and $\lambda_{\text{Lap}}$ for each dataset and select the configuration that minimizes validation negative log likelihood. }
+    \label{fig:hyperparam_grid_search}
+\end{figure}
+
+
+\subsection{Evaluation Metrics}
+
+\paragraph{Distance from true election profile}
+While KL would be a natural choice for a distance function between $\mathcal{D}$ and $\hat{\mathcal{D}}$, given that we minimize negative log likelihood to infer $\hat{\mathcal{D}}$, we opt to define the estimation error via the $l_2$ norm since the support of the estimated distribution may be a subset of the true profile's support, whereas KL requires that the support for $\hat{\mathcal{D}}$ be a superset of the support for $\mathcal{D}$. It is possible to smooth the estimated profile before computing the distribution distance but this likely requires an arbitrary smoothing parameter. Thus, let the estimation error of $\hat{\mathcal{D}}$ be: 
+\begin{equation} \label{eqn:profile-distance}
+    \sum_{R \in \text{PO}(\mathcal{U})} \| p(R) - \hat{p}(R) \|^2,
+\end{equation}
+
+where PO($\mathcal{U}$) denote all partial orders of $\mathcal{U}$. To ensure that the enumeration of all partial rankings is computationally feasible for large $k$, we perform candidate filtering before inferring the election profile. Thus, we can compute Equation \ref{eqn:profile-distance} but summing over the union of the supports for $\mathcal{D}$ and $\hat{\mathcal{D}}$. To filter candidates, given a sample, we run IRV and select the last $6$ eliminated candidates and filter out all other candidates from the ballot sample. With $6$ candidates the number of possible partial rankings is $8,659$.
+
+\paragraph{Forecasting efficacy}
+We also evaluate the estimated profile's forecasting efficacy. Let $F_n(\mathcal{D})$ denote a generic election-result random variable. To sample a single instance of $F$, sample $n$ ballots from the election profile $\mathcal{D}$, run an IRV election on the sample, and return the election result statistic for the election. We evaluate on three election result statistics, which instantiate $F$ as follows:
+\begin{itemize}
+    \item Elimination Rank: $F$ is a vector of length $k$ where component $F_i$ is the elimination rank of candidate $i$.
+    \item Elimination Votes: $F$ is a vector of length $k$ where component $F_i$ is the number of first-place votes candidate $i$ had at elimination.
+    \item Last Round Margin of Victory (MoV): $F$ is the difference in first place votes in the final elimination round.
+\end{itemize}
+
+To evaluate the election profile $\hat{\mathcal{D}}$, we compute the mean and variance of the following random variable:
+\begin{equation} \label{eqn:outcome-error}
+    \left\| \mathbb{E}\left[F_n(\mathcal{D})\right] - F_n(\hat{\mathcal{D}}) \right\|.
+\end{equation}
+
+The above evaluation variable captures the error between a single estimated election result and the expected election result when sampling from the oracle distribution.
+
+\section{Results}
+
+\subsection{Distribution Distance}
+Figure \ref{fig:profile_distance} shows the distribution error (Eq. \eqref{eqn:profile-distance}) for all models at varying sample sizes. The reported errors are averages over $100$ samples. Across all four datasets, the fully equipped choice model (PL + Rank + Context + Reg) achieves a lower distribution error than the bootstrap baseline for sample sizes $<1,000$. Further, for three of the four datasets, increasing modeling complexity also resulted in better profile modeling with the exception being the 2011 San Francisco Mayoral election. As a follow up, we can investigate why the Plackett-Luce model outperforms all others.\footnote{As a note, it is surprising that the PL + Context model performs poorly for the SF dataset since PL + Context is strictly more expressive than the PL model. As a conjecture, this is likely because the number of candidates is large and many candidates are not observed in the samples, meaning the initial push-pull coefficients are not updated. We can experiment with parameter initialization.}
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/profile_distance.pdf}
+    \caption{The distribution error between the true and estimated election profiles. For sample sizes $<1,000$, the fully equipped choice model (PL + rank + Context + Reg) outperforms the independent-ballot baseline (bootstrap). The error for each model and sample size is the average over $100$ trials.}
+    \label{fig:profile_distance}
+\end{figure}
+
+\subsection{Efficacy for Forecasting RCV Elections}
+Do the improvements in profile distribution modeling translate to more accurate election outcome forecasts? We find that the evaluated choice models do not reduce the average error but have the potential to the reduce the variance of errors across ballot samples. Figure \ref{fig:elimination_rank} shows the average outcome error when the outcome is the elimination rank for each candidate (the outcome is $1$ for the winner in a given sample and $k$ for the candidate that is eliminated first).\footnote{Because we perform candidate filtering, we cap the elimination rank value at 7, that is, all candidates finishing outside the top 6 have an elimination rank of 7.} In all four datasets, none of the choice models consistently outperform the bootstrap baseline. These results are also consistent for other outcome statistics such as elimination votes and last-round MoV, which are shown in the Appendix. 
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/election_estimation_elimination rank.pdf}
+    \caption{Error between the estimated elimination rank of each candidate and the true, expected elimination rank when sampling elections from $\mathcal{D}$. None of the choice models yield more accurate election outcomes than the bootstrap baseline. The results for other election outcome statistics (elimination votes and last-round MoV) are similar and included in Appendix \ref{sec:sup-figs}.}
+    \label{fig:elimination_rank}
+\end{figure}
+
+The good news is that Figure \ref{fig:elimination_rank_pareto} shows that the choice models do reduce the variance of forecasting error. Specifically the PL + Context model yields similar average error as the other models but consistently lower variance. The PL + Context error can be thought of as a special case of the PL + Rank + Context + Reg model where the $\lambda_{\text{Lap}}$ is set to a high value, thereby removing rank stratification. A potential next step is to modify the hyperparameter optimization to minimize forecasting error instead of distribution error (NLL).
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/election_estimation_elimination rank_pareto.pdf}
+    \caption{Though the choice models do not reduce average forecast outcome error they do reduce the variance of the forecasting error, where variance is computed over instances of Eq. \eqref{eqn:outcome-error}. The above plots show the mean and standard deviation of outcome errors for each model as the sample size increases, with curves beginning in the top right for small sample sizes and trending toward the bottom left for larger sample sizes. In all four datasets, the PL + Context model appears to reduce the standard deviation of outcome errors.}
+    \label{fig:elimination_rank_pareto}
+\end{figure}
+
+\section{Next Steps}
+The following are potential next steps and follow up questions in no particular order: 
+\begin{itemize}
+    \item Characterize properties of true election profiles that would lend themselves well to contextual choice modeling. As a conjecture, election profiles with larger support and wider tails would benefit more from choice modeling; for these profiles, sampling does not sufficiently capture the ballot support and modeling is needed to infer unseen ballots. Also, for profiles that are highly concentrated on a small number of ballot types, choice modeling can overfit the estimated profile will resemble the independent ballot model. One way to test this would be to evaluate the choice models on smoothed true election profiles.
+    \item Identify why reducing distribution error does not necessarily translate to reducing forecast outcome error. For instance, the fully-equipped model outperforms bootstrap in terms of distribution error but yields nearly identical forecasting error as bootstrap.
+    \item Explore alternative election outcome uncertainty statistics beyond elimination rank and last-round MoV.
+\end{itemize}
+
+\bibliographystyle{unsrtnat}
+\bibliography{references} 
+
+\clearpage
+\appendix
+\section{Supplemental Figures} \label{sec:sup-figs}
+
+\begin{figure}[h!]
+    \centering
+    % First subfigure
+    \begin{subfigure}[b]{\textwidth}
+        \includegraphics[width=\textwidth]{figs/election_estimation_elimination votes.pdf}
+        % \caption{Elimination Votes}
+    \end{subfigure}
+    \hfill % Adds horizontal space between subfigures
+    % Second subfigure
+    \begin{subfigure}[b]{\textwidth}
+        \includegraphics[width=\textwidth]{figs/election_estimation_last round mov.pdf}
+        % \caption{Last-Round MoV}
+    \end{subfigure}
+
+    \caption{The above forecasting outcome error figures are analogous to Figure \ref{fig:elimination_rank} but for the elimination votes and last-round MoV outcome statistics.}
+    \label{fig:mainfigure}
+\end{figure}
+
+\end{document}

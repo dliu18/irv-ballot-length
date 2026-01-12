@@ -28,26 +28,33 @@ from push_pull_choice_model import fit_choice_model
 # For forecasting, the model inference is still the most time consuming step. e.g. simulation is ~0.01s for sf-06
 
 ########### MACROS ###########
-assert len(sys.argv) == 4
+assert len(sys.argv) == 6
 target_election = sys.argv[1]
-optimized_l2_lambda = float(sys.argv[2])
-optimized_laplacian_lambda = float(sys.argv[3])
+NUM_TRIALS = int(sys.argv[2])
+optimized_l2_lambda = float(sys.argv[3])
+optimized_laplacian_lambda = float(sys.argv[4])
+exp_name = sys.argv[5]
 
 data_dir = "elections-all"
-NUM_TRIALS = 75
-# model_names = ["Bootstrap", "PL", "PL + Rank", "PL + Context", "PL + Rank + Context", "PL + Rank + Context + Reg"]
-model_names = ["Bootstrap", "PL + Context",  "PL + Rank + Context + Reg"]
+model_names = ["Bootstrap", "PL", "PL + Rank", "PL + Context", "PL + Rank + Context", "PL + Rank + Context + Reg"]
+# model_names = ["Bootstrap", "PL + Context",  "PL + Rank + Context + Reg"]
 
 
 # model_names = ["PL + Rank + Context + Reg"]
 
 max_k = 6
 training_steps = 30
-num_forecasting_simulations = 250
+num_forecasting_simulations = 0
 
-# sampling_rates = [0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 0.95, 1.0]
-sample_sizes = np.array([50, 100, 250, 500, 1000, 2000, 4000])
-# sample_sizes = np.array([100])
+# glasgow and burlington
+sample_sizes = np.array([50, 100, 150, 200, 400, 800, 1000, 2000, 4000])
+
+# pierce and sf 
+# if target_election in ["pierce-03", "sf-11"]:
+# 	sample_sizes = np.array([50, 100, 250, 500, 1000, 2000, 4000])
+print(sample_sizes)
+
+
 
 
 ########### HELPERS ###########
@@ -161,9 +168,9 @@ if __name__ == "__main__":
 		for sample_size in tqdm(sample_sizes):
 			num_trials = NUM_TRIALS
 			if sample_size >= 1000:
-				num_trials = 10		
+				num_trials = 20		
 			for trial_num in tqdm(range(num_trials)):
-				sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=False, seed=trial_num)
+				sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=True, seed=trial_num)
 
 				filtered_cands = cands.copy()
 				filtered_cand_names = cand_names.copy()
@@ -211,14 +218,14 @@ if __name__ == "__main__":
 						winner = max(elim_votes, key=elim_votes.get)
 						cand_wins_share_by_sample_size[model_name][sample_size][winner][trial_num] += 1
 
-			filename = f"results/push_pull_eval/win_shares_by_election_200_trials_{target_election}.pickle"
-			candidate_win_shares_by_election[election_name] = cand_wins_share_by_sample_size
-			_write_to_file(candidate_win_shares_by_election, filename)
+			# filename = f"results/push_pull_eval/win_shares_by_election_200_trials_{target_election}.pickle"
+			# candidate_win_shares_by_election[election_name] = cand_wins_share_by_sample_size
+			# _write_to_file(candidate_win_shares_by_election, filename)
 
-			filename = f"results/push_pull_eval/l2_by_election_200_trials_{target_election}.pickle"
+			filename = f"results/push_pull_eval/l2_by_election_{exp_name}_{target_election}.pickle"
 			KL_by_election[election_name] = KL_by_sample_size
 			_write_to_file(KL_by_election, filename)
 
-			filename = f"results/push_pull_eval/inferred_distribution_by_election_200_trials_{target_election}.pickle"
+			filename = f"results/push_pull_eval/inferred_distribution_by_election_{exp_name}_{target_election}.pickle"
 			inferred_distribution_by_election[election_name] = inferred_distribution_by_sample_size
 			_write_to_file(inferred_distribution_by_election, filename)

@@ -401,14 +401,21 @@ if __name__ == "__main__":
         title="Burlington True Election Profile",
         filename="burlington_election_profile")
 
-    pickle_filename = "results/push_pull_eval/inferred_distribution_by_election_filtered_burlington-02.pickle"
+    pickle_filename = "results/push_pull_eval/inferred_distribution_by_election_sample_with_replacement_burlington-02.pickle"
     with open(pickle_filename, "rb") as picklefile:
         inferred_distributions = pickle.load(picklefile)
 
     
     for model_name in inferred_distributions["burlington-02"]:
-        D_hat = inferred_distributions["burlington-02"][model_name][50][0]
-        simulated_ballots, simulated_counts = utils.get_ballot_sample_from_distribution(D_hat, n, seed=0)
+        D_hat = inferred_distributions["burlington-02"][model_name][50][1]
+
+        print(f"{model_name} {np.sum(list(D_hat.values()))}")
+
+        simulated_ballots = [ballot for ballot in D_hat.keys()]
+        simulated_counts = tuple([prob * n for prob in D_hat.values()])
+
+        print(f"{n} {np.sum(simulated_counts)}")
+        # simulated_ballots, simulated_counts = utils.get_ballot_sample_from_distribution(D_hat, n, seed=0)
 
         est_ballots, est_counts = utils.reduce_election(simulated_ballots, simulated_counts, filtered_cands)
 

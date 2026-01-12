@@ -8,6 +8,7 @@ import model
 
 import time
 from tqdm import tqdm
+import pickle
 
 colors = ['#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e']
 
@@ -93,24 +94,87 @@ def resample(ballot_counts, sample_size=-1, with_replacement=True, seed=0):
         # return resampled_counts
 
 
-def get_ballot_sample_from_distribution(ballot_distribution, num_samples, seed=0):
+def get_ballot_sample_from_distribution_old(ballot_distribution, num_samples, seed=0):
     ballots = [ballot for ballot in ballot_distribution]
     probs = np.array([ballot_distribution[ballot] for ballot in ballots])
     assert abs(np.sum(probs) - 1) < 1e-6
     probs /= np.sum(probs)
 
+    start = time.time()
     rng = np.random.default_rng(seed=seed)
     sampled_idxs = rng.choice(
         a=len(ballots),
         size=num_samples,
         p=probs)
+    print(f"Sampling time: {round(time.time() - start, 3)}")
 
+    start = time.time()
     ctr = Counter()
     for idx in sampled_idxs:
         ctr[ballots[idx]] += 1
+    print(f"Aggregation time: {round(time.time() - start, 3)}")
+
+    start = time.time()
     items = ctr.most_common()
     output_ballots = [np.array(list(tpl)) for tpl, _ in items]
     ballot_counts = tuple([cnt for _, cnt in items])
+    print(f"Sorting time: {round(time.time() - start, 3)}")
+
+    return output_ballots, ballot_counts
+
+def get_ballot_sample_from_distribution(ballot_distribution, num_samples, seed=0):
+    # ballots = [ballot for ballot in ballot_distribution]
+    # probs = np.array([ballot_distribution[ballot] for ballot in ballots])
+    # assert abs(np.sum(probs) - 1) < 1e-6
+    # probs /= np.sum(probs)
+
+    # start = time.time()
+    # rng = np.random.default_rng(seed=seed)
+    # sampled_idxs = rng.choice(
+    #     a=len(ballots),
+    #     size=num_samples,
+    #     p=probs)
+    # print(f"Sampling time: {round(time.time() - start, 3)}")
+
+    # start = time.time()
+    # ctr = Counter()
+    # for idx in sampled_idxs:
+    #     ctr[ballots[idx]] += 1
+    # print(f"Aggregation time: {round(time.time() - start, 3)}")
+
+    # start = time.time()
+    # items = ctr.most_common()
+    # output_ballots = [np.array(list(tpl)) for tpl, _ in items]
+    # ballot_counts = tuple([cnt for _, cnt in items])
+    # print(f"Sorting time: {round(time.time() - start, 3)}")
+
+    # return output_ballots, ballot_counts
+
+    ballots = list(ballot_distribution.keys())
+    probs = np.fromiter((ballot_distribution[b] for b in ballots), dtype=np.float64, count=len(ballots))
+
+    s = probs.sum()
+    probs = probs / s
+
+    assert np.all(probs >= 0)
+    assert np.isclose(probs.sum(), 1.0)
+
+    start = time.time()
+    rng = np.random.default_rng(seed=seed)
+    counts = rng.multinomial(n=num_samples, pvals=probs)
+    # print(f"Multinomial time (sample+aggregate): {round(time.time() - start, 3)}")
+
+    start = time.time()
+    nonzero = np.flatnonzero(counts)
+    nz_counts = counts[nonzero]
+    order = np.argsort(nz_counts)[::-1]
+
+    idxs_sorted = nonzero[order]
+    counts_sorted = nz_counts[order]
+
+    output_ballots = [np.asarray(ballots[i]) for i in idxs_sorted]
+    ballot_counts = tuple(int(c) for c in counts_sorted)
+    # print(f"Sorting time: {round(time.time() - start, 3)}")
 
     return output_ballots, ballot_counts
     
@@ -377,27 +441,44 @@ def l2(P, Q):
 
 if __name__ == "__main__":
 
-    ## get_elim_order
-    elim_votes = {
-        "A": 10,
-        "B": 5,
-        "C": 30
-    }
+    # ## get_elim_order
+    # elim_votes = {
+    #     "A": 10,
+    #     "B": 5,
+    #     "C": 30
+    # }
 
-    elim_order = get_elim_order(elim_votes)
-    assert elim_order == "B A C"
+    # elim_order = get_elim_order(elim_votes)
+    # assert elim_order == "B A C"
 
 
-    ## Sampling runtime analysis
+    # ## Sampling runtime analysis
 
-    file_name = "data/preflib/elections-all/burlington/ED-00005-00000002.toi" #burlington-election
+    # file_name = "data/preflib/elections-all/burlington/ED-00005-00000002.toi" #burlington-election
+    file_name = "data/preflib/elections-all/glasgow/ED-00008-00000004.soi"
+
     ballots, ballot_counts, cand_names, skippped_votes = read_preflib(file_name)
     n = np.sum(ballot_counts)
 
-    # With Replacement
-    for _ in tqdm(range(500)):
-        resampled_ballots = resample(ballot_counts, sample_size=n, with_replacement=True)
+    # # With Replacement
+    # for _ in tqdm(range(500)):
+    #     resampled_ballots = resample(ballot_counts, sample_size=n, with_replacement=True)
 
-    # Without Replacement
-    for _ in tqdm(range(500)):
-        resampled_ballots = resample(ballot_counts, sample_size=n, with_replacement=False)
+    # # Without Replacement
+    # for _ in tqdm(range(500)):
+    #     resampled_ballots = resample(ballot_counts, sample_size=n, with_replacement=False)
+
+
+    #### time profile ballot sampling ####
+    exp_name = "sample_with_replacement"
+    target_election = "glasgow-04"
+    inferred_distribution_filename = f"results/push_pull_eval/inferred_distribution_by_election_{exp_name}_{target_election}.pickle"
+    with open(inferred_distribution_filename, "rb") as pickleFile:
+        inferred_distribution_by_model = pickle.load(pickleFile)[target_election]
+    inferred_distribution = inferred_distribution_by_model["PL + Rank + Context + Reg"][800][0]
+
+    num_samples = n
+    ballots, ballot_counts = get_ballot_sample_from_distribution_old(inferred_distribution, num_samples, seed=0)
+
+    print(len(ballots))
+

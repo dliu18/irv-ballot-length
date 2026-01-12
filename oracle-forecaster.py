@@ -7,7 +7,7 @@ import numpy as np
 
 from collections import Counter
 
-from irv import run_irv
+from irv import run_irv_with_mov
 
 import utils 
 
@@ -21,32 +21,15 @@ For each real-world election, according to the oracle election profile, how ofte
 target_elections = ["burlington-02", "glasgow-04", "sf-11", "pierce-03"]
 data_dir = "elections-all"
 num_trials = 1000
-model_names = ["Bootstrap"]
-# model_names = ["Bootstrap", "PL + Rank + Context"]
-
-sampling_rates = [1.0]
+stat_names = ["elimination rank", "elimination votes", "last round mov"]
 
 ########### HELPERS ###########
 
-def _write_win_shares_to_file(win_shares):
-	existing_win_shares = {}
-	try:
-		with open(f"results/push_pull_eval/win_shares_by_election_oracle.pickle", "rb") as pickleFile:
-			existing_win_shares = pickle.load(pickleFile)
-	except:
-		pass
-
-	for election_name in win_shares:
-		existing_win_shares[election_name] = win_shares[election_name]
-
-	with open(f"results/push_pull_eval/win_shares_by_election_oracle.pickle", "wb") as pickleFile:
-		pickle.dump(existing_win_shares, pickleFile)
 
 if __name__ == "__main__":
 
 	elections = utils.load_all_preflib_elections(election_dir=f"data/preflib/{data_dir}")
 
-	candidate_win_shares_by_election = {}
 
 	for collection, file_name, ballots, ballot_counts, cand_names, _ in elections:
 		election_name = f"{collection}-{file_name[-6:-4]}"
@@ -59,33 +42,30 @@ if __name__ == "__main__":
 		k = len(cand_names)
 		cands = list(cand_names.keys())
 
-		cand_wins_share_by_sampling_rate = {
-			sampling_rate: {
-				cand: 0 for cand in cands
-			} for sampling_rate in sampling_rates
+		election_stats = {
+			stat_name: []
+			for stat_name in stat_names
 		}
 
-		for sampling_rate in sampling_rates:
-			sample_size = int(sampling_rate * n)
-			
-			for trial_num in tqdm(range(num_trials)):
-				sample_counts = utils.resample(ballot_counts, sample_size, with_replacement=True, seed=trial_num)
+		for trial_num in tqdm(range(num_trials)):
+			sample_counts = utils.resample(ballot_counts, n, with_replacement=True, seed=trial_num)
 
-				elim_votes = run_irv(
-					k, 
-					ballots.copy(), 
-					sample_counts, 
-					cands=cands)
-				winner = max(elim_votes, key=elim_votes.get)
-				cand_wins_share_by_sampling_rate[sampling_rate][winner] += (1 / num_trials)
+			elim_votes, mov = run_irv_with_mov(
+				k, 
+				ballots.copy(), 
+				sample_counts, 
+				cands=cands)
 
-			candidate_win_shares_by_election[election_name] = cand_wins_share_by_sampling_rate
-			_write_win_shares_to_file(candidate_win_shares_by_election)
+			sorted_cands = sorted(elim_votes.items(), key=lambda x: x[1], reverse=True)
+			elim_rank = {cand: rank + 1 for rank, (cand, _) in enumerate(sorted_cands)}
 
-print(candidate_win_shares_by_election)
+			election_stats["elimination rank"].append(elim_rank)
+			election_stats["elimination votes"].append(elim_votes)
+			election_stats["last round mov"].append(mov)
 
-
-
+		filename = f"results/push_pull_eval/oracle_forecast_{election_name}.pickle"
+		with open(filename, "wb") as pickleFile:
+			pickle.dump(election_stats, pickleFile)
 
 
 
